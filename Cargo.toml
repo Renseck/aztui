@@ -1,0 +1,28 @@
+[package]
+name = "aztui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+authors = ["Renseck "]
+description = "A new Rust project"
+readme = "README.md"
+homepage = "https://github.com/yourusername/myproject"
+repository = "https://github.com/yourusername/myproject"
+license = "MIT"
+keywords = ["cli", "tool"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+aes-gcm = "0.10.3"
+argon2 = "0.5.3"
+async-trait = "0.1.89"
+chrono = "0.4.44"
+clap = { version = "4.6.0", features = ["derive"] }
+crossterm = "0.29.0"
+dirs = "6.0.0"
+keyring = "3.6.3"
+ratatui = "0.30.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.51.0", features = ["full"] }
+toml = "1.1.2"
