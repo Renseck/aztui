@@ -422,4 +422,5 @@ channel, which the loop picks up in step 4 on the next iteration.
 - `docs/foundation-types.md` — authoritative type definitions for all structs,
   enums, and traits described in this document.
 - `docs/tui-wireframes.md` - visual reference of all views and overlays.
+- `docs/color-scheme.md` - visual reference for the color scheme of the TUI.
 - `CLAUDE.md` — operational guidance, conventions, current phase scope.

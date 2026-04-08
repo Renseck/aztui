@@ -294,6 +294,7 @@ error model, security model, UX design rationale.
   and the foundation file ever disagree, the foundation file wins for type
   definitions and this file wins for architectural decisions.
 - `docs/tui-wireframes.md` - visual reference of all views and overlays.
+- `docs/color-scheme.md` - visual reference for the color scheme of the TUI.
 - `docs/styleguide.md` - full Rust coding style specification.
 
 If CLAUDE.md and `foundation-types.md` disagree, foundation-types.md wins for
