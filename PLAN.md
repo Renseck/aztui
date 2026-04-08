@@ -455,3 +455,651 @@ Step 14 (Event enum) ───┘           │                    │
 1. **Navigation state in context switcher**: The `AppState` doesn't explicitly define a `selected_index` for list navigation. Either add it to `AppState` or keep it as widget-local state in the context switcher. Recommendation: add `selected_index: usize` to `AppState` since all state should live there per architecture.md.
 2. **Async command results**: The architecture sketch shows async tasks sending results back via the command channel. Need to decide on exact mechanism — recommendation: define internal `Command` variants like `_ContextListResult(Result<...>)` prefixed with underscore to indicate they're system-generated, not user-initiated. Alternative: use a separate result channel.
 3. **List navigation commands**: The `Command` enum in foundation-types.md doesn't include `MoveUp`/`MoveDown` navigation commands. These could be handled purely in the UI layer (widget state) rather than as full Commands, or we add `NavigateList(Direction)` variants. Recommendation: handle in UI layer since list navigation doesn't need to go through the full Command→Event cycle.
+
+
+---
+
+# Phase 2 — Security Layer
+
+**TL;DR**: Add optional master password protection for local cached data. Argon2id for key derivation, AES-256-GCM for cache encryption at rest, inactivity auto-lock, and optional OS keyring integration. The app must remain fully functional when the security layer is disabled.
+
+**Prerequisite**: Phase 1 complete and stable.
+
+---
+
+## Phase 2A — Disk-Persistent Cache + Encryption Primitives
+
+Before encrypting anything, the cache needs to persist to disk (Phase 1 cache is in-memory only). Then build the low-level crypto building blocks.
+
+### Step 32: Disk-persistent cache (`src/cache/store.rs`)
+- Extend `CacheStore` from Phase 1 to support disk persistence:
+  - `save_to_disk(&self, path: &Path) -> Result<(), AppError>` — serialize all entries to JSON file
+  - `load_from_disk(path: &Path) -> Result<CacheStore, AppError>` — deserialize from JSON file
+  - Storage location: `{data_dir}/cache.json` (data_dir from `GeneralConfig`, default `~/.aztui/`)
+  - Save on every cache mutation (debounced) or on graceful shutdown
+  - `CacheEntry<T>` needs `Serialize`/`Deserialize` — replace `Instant` with `chrono::DateTime<Utc>` for serializable timestamps (or store duration-since-epoch)
+  - Handle missing/corrupt file gracefully: log warning, start fresh
+
+### Step 33: Argon2id key derivation (`src/security/master_key.rs`)
+- `derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], AppError>`
+  - Uses Argon2id with recommended parameters (m=19456 KiB, t=2, p=1 — or OWASP-recommended)
+  - Returns 256-bit key suitable for AES-256-GCM
+- `generate_salt() -> [u8; 16]` — cryptographically random salt via `rand` or `getrandom`
+- `StoredKeyParams` struct:
+  - `salt: Vec<u8>`, `m_cost`, `t_cost`, `p_cost`
+  - Serializable to JSON for storage in `{data_dir}/master.json`
+  - Created once during password setup, loaded on subsequent launches
+- `verify_password(password: &str, params: &StoredKeyParams, verification_blob: &[u8]) -> Result<bool, AppError>`
+  - Derive key, attempt to decrypt a known verification blob to confirm correctness
+
+### Step 34: AES-256-GCM encrypt/decrypt (`src/security/crypto.rs`)
+- `encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, AppError>`
+  - Generate random 96-bit nonce per encryption
+  - Prepend nonce to ciphertext in output: `[nonce (12 bytes)][ciphertext+tag]`
+- `decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, AppError>`
+  - Extract nonce from first 12 bytes, decrypt remainder
+  - Map authentication failures to `AppError` with `CacheDecryptionFailed`
+- No key reuse — every encrypt call generates a fresh nonce
+- Map all crypto errors to `AppError` appropriately
+
+### Step 35: Security module wiring (`src/security/mod.rs`)
+- Re-export `derive_key`, `generate_salt`, `StoredKeyParams`, `encrypt`, `decrypt`
+- `SecurityManager` struct (optional):
+  - Holds the derived key in memory while unlocked
+  - Methods: `setup_password()`, `unlock()`, `lock()`, `is_locked()`, `encrypt_data()`, `decrypt_data()`
+  - Key is zeroized on lock (use `zeroize` crate or manual zeroing)
+
+**Verification for Phase 2A**:
+- Unit tests for Argon2id: derive key, re-derive with same params → same key
+- Unit tests for AES-256-GCM: encrypt → decrypt round-trip, tampered ciphertext → `CacheDecryptionFailed`
+- Unit tests for disk cache: save → load round-trip, corrupt file → graceful fallback
+- New dependency: possibly `zeroize` crate for secure memory clearing
+
+---
+
+## Phase 2B — Encrypted Cache Integration
+
+Wire the crypto primitives into the cache store so all persisted data is encrypted at rest.
+
+### Step 36: Encrypted disk cache (`src/cache/store.rs`)
+- When `security.master_password_enabled` is true in config:
+  - `save_to_disk()` serializes to JSON → encrypts with derived key → writes encrypted blob
+  - `load_from_disk()` reads encrypted blob → decrypts with derived key → deserializes JSON
+  - If decryption fails (wrong password, corrupt file): return `CacheDecryptionFailed` error, app falls back to fresh CLI calls
+- When disabled: plain JSON file (Phase 2A behavior)
+- Cache file format: version byte + encrypted payload (allows future format changes)
+
+### Step 37: Master password setup flow
+- First launch with `security.master_password_enabled = true` and no `master.json`:
+  - Prompt user to create a master password (via `Modal::PasswordPrompt` variant)
+  - Derive key via Argon2id, generate salt, encrypt a verification blob
+  - Store `StoredKeyParams` + encrypted verification blob in `{data_dir}/master.json`
+- Subsequent launches:
+  - Load `StoredKeyParams` from `master.json`
+  - Prompt for password → derive key → verify against verification blob
+  - If correct: decrypt cache, proceed normally
+  - If incorrect: show inline error below password field (per wireframe §6), allow retry
+  - 3 failed attempts: show hint, do not lock out (user can keep trying or quit)
+
+### Step 38: Unlock command integration (`src/app.rs`)
+- Wire `Command::Unlock(password)` in `dispatch_command()`:
+  - Call `SecurityManager::unlock(password)` → derive key → verify
+  - On success: decrypt cache, emit `Event::AppUnlocked`, set `state.locked = false`
+  - On failure: emit `Event::UnlockFailed`, keep `state.locked = true`
+- Wire `Command::Lock`:
+  - Zeroize the derived key in `SecurityManager`
+  - Set `state.locked = true`, emit `Event::AppLocked`
+  - Clear any sensitive data from AppState (subscription lists, etc.) — they'll reload on unlock
+
+**Verification for Phase 2B**:
+- Integration test: setup password → lock → unlock with correct password → cache accessible
+- Integration test: unlock with wrong password → `UnlockFailed` event → state stays locked
+- Integration test: enable master password → cache file is encrypted on disk (not readable as JSON)
+- Manual test: launch with password → enter correct → data loads; enter wrong → error shown inline
+
+---
+
+## Phase 2C — Inactivity Lock & OS Keyring
+
+### Step 39: Inactivity timeout (`src/app.rs`)
+- In the main event loop (step 16, existing code), add inactivity check:
+  - Track `state.last_interaction` — update on every user input event
+  - If `security.inactivity_timeout` is set and elapsed > timeout:
+    - Dispatch `Command::Lock`
+    - Zeroize key, show password prompt modal
+  - Default timeout: 10 minutes (configurable, `None` = never)
+- When locked:
+  - UI renders `Modal::PasswordPrompt` overlay
+  - Background is blank/dimmed — no data visible (per wireframe §6)
+  - Only `q` (quit) and password entry are accepted
+
+### Step 40: Password prompt widget updates (`src/ui/widgets/modal.rs`)
+- Extend the `Modal::PasswordPrompt` rendering:
+  - Lock icon + "aztui is locked" header
+  - Password input field with `•` masking
+  - Inline error message below input on wrong password (red text)
+  - Footer: "Enter: unlock   q: quit"
+  - Per wireframe §6
+
+### Step 41: OS keyring integration (`src/security/master_key.rs`)
+- When `security.use_os_keyring = true`:
+  - On first setup: derive key, store derived key in OS keyring via `keyring` crate
+  - On subsequent launches: retrieve key from keyring → skip password prompt
+  - Fallback: if keyring retrieval fails (locked keyring, missing entry), fall back to password prompt
+  - Service name: `aztui`, username: current OS user
+- `KeyringManager` struct:
+  - `store_key(key: &[u8; 32]) -> Result<(), AppError>`
+  - `retrieve_key() -> Result<Option<[u8; 32]>, AppError>`
+  - `delete_key() -> Result<(), AppError>`
+- Config toggle: `security.use_os_keyring` in `config.toml`
+
+### Step 42: Security config commands
+- Add CLI arg: `--reset-password` to re-run the password setup flow
+- Add Command variant (or CLI-only path): reset master password — re-derive with new password, re-encrypt cache, update `master.json`
+
+**Verification for Phase 2C**:
+- Manual test: set `inactivity_timeout = 30s` in config → wait → app locks → enter password → unlocks
+- Manual test: `use_os_keyring = true` → first launch prompts password → second launch skips prompt
+- Manual test: delete keyring entry → falls back to password prompt
+- Unit test: inactivity check fires at correct threshold
+- Ensure `zeroize` properly clears key from memory (debug build inspection)
+
+---
+
+## Phase 2 Relevant Files
+
+- `src/security/master_key.rs` — Argon2id key derivation, `StoredKeyParams`, OS keyring (steps 33, 41)
+- `src/security/crypto.rs` — AES-256-GCM encrypt/decrypt (step 34)
+- `src/security/mod.rs` — `SecurityManager`, re-exports (step 35)
+- `src/cache/store.rs` — disk persistence, encrypted storage (steps 32, 36)
+- `src/app.rs` — `Command::Lock`/`Unlock` handling, inactivity check (steps 38, 39)
+- `src/ui/widgets/modal.rs` — password prompt rendering (step 40)
+- `src/config/settings.rs` — `SecurityConfig` already defined; no changes needed unless adding new fields
+- `src/main.rs` — wire `SecurityManager` into startup, conditional password prompt (steps 37, 38)
+
+## Phase 2 Dependency Graph
+
+```
+Step 32 (disk cache) ──────────────────────────┐
+Step 33 (Argon2id) ──┬→ Step 35 (module) ──────┤
+Step 34 (AES-GCM) ───┘                         │
+                                                ▼
+                                      Step 36 (encrypted cache)
+                                                │
+                                                ▼
+                                      Step 37 (setup flow)
+                                                │
+                                                ▼
+                                      Step 38 (unlock commands)
+                                                │
+                              ┌─────────────────┼─────────────────┐
+                              ▼                 ▼                 ▼
+                         Step 39           Step 40           Step 41
+                      (inactivity)     (prompt widget)    (OS keyring)
+                              └─────────────────┼─────────────────┘
+                                                ▼
+                                      Step 42 (reset password)
+```
+
+
+**Parallelism notes**:
+- Steps 32, 33, 34 can be done in parallel (no interdependencies)
+- Step 35 depends on 33, 34
+- Step 36 depends on 32, 35
+- Steps 37, 38 are sequential (setup before unlock handling)
+- Steps 39, 40, 41 can be done in parallel after 38
+
+## Phase 2 Decisions
+
+- **Opt-in by default**: Master password is disabled unless `security.master_password_enabled = true` in config. App works identically to Phase 1 when disabled.
+- **No lockout**: Wrong password allows unlimited retries. The point is casual access prevention, not Fort Knox.
+- **Cache fallback**: If decryption fails, the app logs a warning and works with fresh CLI calls. Encrypted cache is a convenience, not a hard dependency.
+- **Key zeroization**: Derived key is zeroized from memory on lock. Use `zeroize` crate for proper clearing.
+- **Keyring is optional alternative**: OS keyring replaces the password prompt, it doesn't add a second factor. One or the other, not both.
+- **New dependency**: `zeroize` crate for secure memory clearing. `getrandom` (or `rand`) for salt generation. `keyring` already in Cargo.toml.
+
+---
+---
+
+# Phase 3 — Resource Browser
+
+**TL;DR**: Add a two-pane resource browsing view. Left pane shows resource groups for the active subscription; right pane shows resources within the selected group. Drill-down navigation with search filtering per pane.
+
+**Prerequisite**: Phase 1 complete. Phase 2 is independent (can be done before or after Phase 3).
+
+---
+
+## Phase 3A — Resource Infrastructure
+
+Build the data pipeline for fetching and parsing resource data from `az` CLI.
+
+### Step 43: Resource command builders (`src/az/commands.rs`)
+- Add to existing command builders:
+  - `resource_group_list(subscription_id: &str) -> Vec<String>` — `["group", "list", "--subscription", subscription_id]`
+  - `resource_list(subscription_id: &str, resource_group: &str) -> Vec<String>` — `["resource", "list", "--subscription", subscription_id, "--resource-group", resource_group]`
+- Both produce JSON output (inherited from executor's `--output json` flag)
+
+### Step 44: Resource JSON parsers (`src/az/parser.rs`)
+- `parse_resource_group_list(json: &str) -> Result<Vec<ResourceGroup>, AppError>`
+  - Parses `az group list` JSON: array of objects with `name`, `location`, `tags`
+  - Maps to `ResourceGroup` domain model (already defined in Phase 1 step 2)
+  - Injects `subscription_id` (not in CLI output, provided by caller)
+- `parse_resource_list(json: &str) -> Result<Vec<Resource>, AppError>`
+  - Parses `az resource list` JSON: array of objects with `id`, `name`, `type`, `resourceGroup`, `location`, `tags`
+  - Maps `type` field → `resource_type` (e.g. `"Microsoft.Compute/virtualMachines"`)
+  - Maps to `Resource` domain model
+
+### Step 45: Resource cache entries (`src/cache/store.rs`)
+- No structural changes needed — `CacheStore` is generic
+- Define cache key conventions:
+  - Resource groups: `CacheKey { scope: Subscription(id), kind: "resource_groups" }`
+  - Resources: `CacheKey { scope: Subscription(id), kind: "resources:{resource_group_name}" }`
+- Use `CacheConfig.resource_soft_ttl` / `resource_hard_ttl` (already defined in Phase 1)
+
+**Verification for Phase 3A**:
+- Unit tests for `parse_resource_group_list` with sample `az group list` JSON
+- Unit tests for `parse_resource_list` with sample `az resource list` JSON
+- Unit tests for edge cases: empty resource group, resources with no tags, unusual resource types
+
+---
+
+## Phase 3B — Resource Provider
+
+### Step 46: ResourceProvider implementation (`src/providers/resource_provider.rs`)
+- Implement `AzResourceProvider` struct:
+  - Holds `Arc<dyn AzCliExecutor>`, `Arc<RwLock<CacheStore>>`, `CacheConfig`
+  - `list_resource_groups(subscription_id)`:
+    - Check cache → if fresh return cached; if stale return cached + background refresh; if expired synchronous refresh
+    - Call `az group list --subscription <id>` via executor, parse with `parse_resource_group_list`
+    - Cache result with `resource_soft_ttl` / `resource_hard_ttl`
+  - `list_resources(subscription_id, resource_group)`:
+    - Same cache pattern with per-resource-group cache key
+    - Call `az resource list --subscription <id> --resource-group <name>` via executor, parse
+- Wire into `src/providers/mod.rs`
+
+### Step 47: Resource commands in dispatch (`src/app.rs`)
+- Handle `Command::ListResourceGroups` in `dispatch_command()`:
+  - Spawn async task calling `ResourceProvider::list_resource_groups(active_subscription_id)`
+  - On completion: emit `Event::ResourceGroupsLoaded(groups)`
+  - Handle error: emit `Event::ErrorOccurred`
+- Handle `Command::ListResources(resource_group_name)`:
+  - Spawn async task calling `ResourceProvider::list_resources(active_subscription_id, name)`
+  - On completion: emit `Event::ResourcesLoaded { resource_group, resources }`
+- Add resource state fields to `AppState`:
+  - `resource_groups: Vec<ResourceGroup>` — current subscription's resource groups
+  - `resources: Vec<Resource>` — currently selected resource group's resources
+  - `selected_resource_group_index: usize`
+  - `selected_resource_index: usize`
+  - `resource_browser_focus: Pane` — `enum Pane { Left, Right }`
+
+### Step 48: Event handling for resources (`src/app.rs`)
+- `Event::ResourceGroupsLoaded(groups)`:
+  - Set `state.resource_groups = groups`
+  - Reset `selected_resource_group_index` to 0
+  - Auto-trigger `Command::ListResources` for the first group (if any)
+- `Event::ResourcesLoaded { resource_group, resources }`:
+  - Set `state.resources = resources`
+  - Reset `selected_resource_index` to 0
+- On `Event::ContextChanged`: clear resource groups and resources (stale data from previous subscription)
+
+**Verification for Phase 3B**:
+- Integration tests with `MockCliExecutor`:
+  - `list_resource_groups` returns correct groups from canned JSON
+  - `list_resources` returns correct resources from canned JSON
+  - Cache behavior: second call returns cached without executor call
+  - Context change clears resource state
+
+---
+
+## Phase 3C — Resource Browser UI
+
+### Step 49: Resource browser widget (`src/ui/widgets/`) — new file or extend context_switcher
+- Two-pane layout per wireframe §3:
+  - Left pane (~35% width): resource group list
+    - Each row: resource group name
+    - Bottom: count summary ("5 groups")
+    - Selected row highlighted
+  - Right pane (~65% width): resources in selected group
+    - Columns: Name, Type (abbreviated), Region (abbreviated)
+    - Bottom: count summary ("7 resources")
+    - Selected row highlighted
+  - Focused pane has `azure` border, unfocused pane has `muted` border (per color-scheme.md)
+- Resource type abbreviation helper: `"Microsoft.Compute/virtualMachines"` → `"VM"`, `"Microsoft.Storage/storageAccounts"` → `"Storage"`, etc. — maintain a lookup map for common types, fall back to last segment
+
+### Step 50: Resource browser input handling (`src/ui/input.rs`)
+- When `state.active_view == View::ResourceBrowser`:
+  - `Tab` or `→` / `←`: switch focus between panes (toggle `resource_browser_focus`)
+  - `j/k` / `↑/↓`: navigate within focused pane
+  - `/`: search within focused pane (filter resource groups or resources by name)
+  - `Enter` on a resource group: same as navigating right (load resources, focus right pane)
+  - `Esc`: clear search, or if search empty, go back to context switcher
+  - `r`: refresh resource groups + resources
+- Navigation in left pane auto-triggers `Command::ListResources` for the newly selected group
+
+### Step 51: Resource browser layout integration (`src/ui/layout.rs`)
+- When `state.active_view == View::ResourceBrowser`:
+  - Render title bar with breadcrumb: "aztui > Resources" (per wireframe)
+  - Split content area horizontally: 35% / 65%
+  - Render resource group list widget in left, resource list widget in right
+- Search bar appears at top of content area when active (same as context switcher)
+
+### Step 52: Navigation to resource browser
+- Keybinding: `2` key → `Command::NavigateTo(View::ResourceBrowser)`
+- On navigation: if `state.resource_groups` is empty, auto-dispatch `Command::ListResourceGroups`
+- If no active subscription: show "Select a subscription first" message in content area
+- Breadcrumb rendering in title bar: "aztui" for context switcher, "aztui > Resources" for resource browser
+
+### Step 53: Resource type abbreviation map
+- Utility function or constant map: full ARM type → short display name
+- Common mappings (extend as needed):
+  - `Microsoft.Compute/virtualMachines` → `VM`
+  - `Microsoft.Storage/storageAccounts` → `Storage`
+  - `Microsoft.KeyVault/vaults` → `KeyVault`
+  - `Microsoft.Sql/servers/databases` → `SQL DB`
+  - `Microsoft.Network/networkInterfaces` → `NIC`
+  - `Microsoft.Network/networkSecurityGroups` → `NSG`
+  - `Microsoft.ContainerService/managedClusters` → `AKS`
+  - `Microsoft.Web/sites` → `App Service`
+  - Fallback: last segment of the type string (e.g. `"publicIPAddresses"`)
+
+**Verification for Phase 3C**:
+- Manual test: navigate to resource browser with `2` → resource groups load for active subscription
+- Manual test: select a resource group → resources load in right pane
+- Manual test: Tab switches focus between panes, search filters within focused pane
+- Manual test: switch subscription → resource data clears, re-loads for new subscription
+- Resource types display as abbreviated names
+- Both panes show item counts at bottom
+
+---
+
+## Phase 3 Relevant Files
+
+- `src/az/commands.rs` — resource command builders (step 43)
+- `src/az/parser.rs` — resource JSON parsers (step 44)
+- `src/providers/resource_provider.rs` — `AzResourceProvider` impl (step 46)
+- `src/providers/mod.rs` — re-export (step 46)
+- `src/app.rs` — resource state fields, command dispatch, event handling (steps 47, 48)
+- `src/ui/widgets/` — resource browser widget (step 49), possibly new file `resource_browser.rs`
+- `src/ui/input.rs` — resource browser keybindings (step 50)
+- `src/ui/layout.rs` — two-pane layout, breadcrumbs (step 51)
+- `src/domain/resources.rs` — `ResourceProvider` trait (defined in Phase 1, now implemented)
+- `src/cache/store.rs` — no changes, just new cache key conventions (step 45)
+
+## Phase 3 Dependency Graph
+
+```
+Step 43 (command builders) ──┬→ Step 44 (parsers)
+                             │                │
+                             └────────────────┤
+                                              ▼
+Step 45 (cache keys) ──────→ Step 46 (provider)
+                                              │
+                              ┌───────────────┤
+                              ▼               ▼
+                     Step 47 (dispatch)  Step 48 (events)
+                              │
+                              ▼
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        Step 49          Step 50          Step 51
+       (widget)      (input handler)     (layout)
+              └───────────────┼───────────────┘
+                              ▼
+                    Step 52 (navigation)
+                    Step 53 (type abbrev) ← parallel with 49-51
+```
+
+
+**Parallelism notes**:
+- Steps 43, 45 can be done in parallel
+- Step 44 depends on 43 (needs to know what JSON comes back)
+- Step 46 depends on 43, 44, 45
+- Steps 47, 48 can be done together after 46
+- Steps 49, 50, 51 can be done in parallel after 47-48
+- Step 53 is independent, can be done anytime
+
+## Phase 3 Decisions
+
+- **No resource detail view in Phase 3**: Selecting a resource in the right pane doesn't drill down further. Resource detail view (showing tags, properties, metrics) is a future feature.
+- **Resource type abbreviation is best-effort**: Unknown types fall back to the last segment of the ARM type string. The map is hardcoded, not configurable.
+- **Search filters current pane only**: When typing in the resource browser, only the focused pane is filtered.
+- **Auto-load on navigation**: Navigating to the resource browser auto-fetches resource groups if not cached. Selecting a resource group auto-fetches its resources.
+- **New AppState fields**: `resource_groups`, `resources`, `selected_resource_group_index`, `selected_resource_index`, `resource_browser_focus` added to `AppState`.
+
+---
+---
+
+# Phase 4 — Cost Explorer (FinOps)
+
+**TL;DR**: Add a cost summary view showing per-service cost breakdown for the active subscription, with period navigation and inline bar charts. Uses `az consumption usage list` or `az costmanagement` commands.
+
+**Prerequisite**: Phase 1 complete. Independent of Phases 2 and 3.
+
+---
+
+## Phase 4A — Cost Infrastructure
+
+### Step 54: Cost command builders (`src/az/commands.rs`)
+- Research the correct `az` command for cost data. Options:
+  - `az consumption usage list --subscription <id> --start-date <from> --end-date <to>` — per-resource usage
+  - `az cost-management query --type ActualCost --timeframe Custom --time-period from=<from> to=<to> --dataset-aggregation '{"totalCost":{"name":"Cost","function":"Sum"}}' --dataset-grouping name=ServiceName type=Dimension --scope /subscriptions/<id>` — aggregated by service
+- Prefer `az cost-management query` if available — it returns pre-aggregated data, avoiding client-side aggregation of potentially thousands of usage records
+- Fallback: if `cost-management` extension not installed, use `consumption usage list` and aggregate client-side
+- Command builders:
+  - `cost_query_by_service(subscription_id, from, to) -> Vec<String>`
+  - `cost_query_by_resource_group(subscription_id, resource_group, from, to) -> Vec<String>`
+
+### Step 55: Cost JSON parsers (`src/az/parser.rs`)
+- `parse_cost_query(json: &str, scope: CostScope) -> Result<CostSummary, AppError>`
+  - Parse the `az cost-management query` response format:
+    - Rows with `[cost, service_name]` or similar structure
+    - Aggregate into `CostLineItem` list
+    - Sum total
+    - Extract currency from response metadata
+  - Map to `CostSummary` domain model (already defined in Phase 1 step 2)
+- Handle edge cases: no data for period, zero-cost subscriptions, mixed currencies
+- If using `consumption usage list` fallback:
+  - `parse_consumption_usage(json: &str, scope: CostScope, period: CostPeriod) -> Result<CostSummary, AppError>`
+  - Group by service name, sum costs per service, compute total
+
+### Step 56: Cost cache entries
+- Cache key conventions:
+  - Subscription cost: `CacheKey { scope: Subscription(id), kind: "cost:{from}:{to}" }`
+  - Resource group cost: `CacheKey { scope: Subscription(id), kind: "cost:{rg_name}:{from}:{to}" }`
+- Use `CacheConfig.cost_soft_ttl` / `cost_hard_ttl` (already defined, defaults 15min / 2hr)
+
+**Verification for Phase 4A**:
+- Unit tests for cost parser with sample `az cost-management query` JSON output
+- Unit tests for aggregation logic (multiple rows → sorted by amount, total computation)
+- Unit tests for edge cases (empty result, zero costs)
+- Determine which `az` command is reliably available and document the choice
+
+---
+
+## Phase 4B — Cost Provider
+
+### Step 57: CostProvider implementation (`src/providers/cost_provider.rs`)
+- Implement `AzCostProvider` struct:
+  - Holds `Arc<dyn AzCliExecutor>`, `Arc<RwLock<CacheStore>>`, `CacheConfig`
+  - `get_cost_summary(subscription_id, period)`:
+    - Cache check with stale-while-revalidate pattern
+    - Call cost query command via executor, parse
+    - Sort breakdown by amount descending
+    - Cache result
+  - `get_resource_group_cost(subscription_id, resource_group, period)`:
+    - Same pattern, scoped to resource group
+    - Used for future drill-down (not exposed in Phase 4 UI, but provider ready)
+- Error mapping:
+  - Cost management extension not installed → `AppError` with `CliExecutionFailed` and `Manual("Install the cost-management extension: az extension add --name costmanagement")` recovery
+  - Permission denied (no Reader role on billing) → `AppError` with `AuthFailed` and `Manual` hint
+  - No data → return `CostSummary` with zero total and empty breakdown (not an error)
+- Wire into `src/providers/mod.rs`
+
+### Step 58: Cost commands in dispatch (`src/app.rs`)
+- Handle `Command::FetchCostSummary(period)` in `dispatch_command()`:
+  - Spawn async task calling `CostProvider::get_cost_summary(active_subscription_id, period)`
+  - On completion: emit `Event::CostSummaryLoaded(summary)`
+  - Handle error: emit `Event::ErrorOccurred`
+- Add cost state fields to `AppState`:
+  - `cost_summary: Option<CostSummary>` — current cost data
+  - `cost_period: CostPeriod` — currently selected period (default: current month)
+  - `cost_selected_index: usize` — selected row in cost breakdown
+
+### Step 59: Event handling for cost (`src/app.rs`)
+- `Event::CostSummaryLoaded(summary)`:
+  - Set `state.cost_summary = Some(summary)`
+  - Reset `cost_selected_index` to 0
+- On `Event::ContextChanged`: clear `cost_summary` (stale data from previous subscription)
+
+**Verification for Phase 4B**:
+- Integration tests with `MockCliExecutor`:
+  - `get_cost_summary` returns correct summary from canned JSON
+  - Breakdown sorted by amount descending
+  - Cache behavior: second call returns cached without executor call
+  - Context change clears cost data
+- Error scenario: cost extension not installed → helpful error message
+
+---
+
+## Phase 4C — Cost Explorer UI
+
+### Step 60: Cost explorer widget (`src/ui/widgets/`) — new file `cost_explorer.rs`
+- Per wireframe §4:
+  - Header: subscription name, period range, period navigation arrows
+  - Total cost display: `€1,247.83 EUR` in bright text with currency symbol in muted
+  - Service breakdown table:
+    - Columns: Service name, Cost (right-aligned), inline bar chart, Percentage
+    - Sorted by cost descending (from provider)
+    - Top N services shown individually, remainder grouped as "Other (N services)"
+    - N = configurable or dynamic based on terminal height (default: show as many as fit)
+  - Inline bar charts: 10 chars wide, `█` filled portion (azure color), `░` empty portion (overlay color)
+    - Bar width = (service_amount / total_amount) * 10, rounded
+
+### Step 61: Period navigation
+- Period navigation keybindings:
+  - `[` or `h` : previous month
+  - `]` or `l` : next month
+  - Can't navigate past current month
+- `CostPeriod` helpers:
+  - `CostPeriod::current_month() -> CostPeriod` — from 1st of current month to today
+  - `CostPeriod::previous_month(current: &CostPeriod) -> CostPeriod`
+  - `CostPeriod::next_month(current: &CostPeriod) -> Option<CostPeriod>` — None if already current month
+- Period change dispatches `Command::FetchCostSummary(new_period)` — triggers data fetch for new period
+
+### Step 62: Cost explorer input handling (`src/ui/input.rs`)
+- When `state.active_view == View::CostExplorer`:
+  - `j/k` / `↑/↓`: navigate service breakdown rows (for future drill-down)
+  - `[` / `]` or `h` / `l`: period navigation
+  - `r`: refresh cost data for current period
+  - `Esc`: return to context switcher
+  - `/`: search/filter service names in breakdown
+
+### Step 63: Cost explorer layout integration (`src/ui/layout.rs`)
+- When `state.active_view == View::CostExplorer`:
+  - Render title bar with breadcrumb: "aztui > Cost Explorer"
+  - Content area: single-pane with header section (subscription, period, total) + scrollable breakdown table
+  - Period navigation arrows rendered as `[ ◂ prev ] [ next ▸ ]` (per wireframe)
+
+### Step 64: Navigation to cost explorer
+- Keybinding: `3` key → `Command::NavigateTo(View::CostExplorer)`
+- On navigation: if `state.cost_summary.is_none()`, auto-dispatch `Command::FetchCostSummary(current_month)`
+- If no active subscription: show "Select a subscription first" message
+- If cost data is loading: show spinner with "Loading cost data..." (reuse loading widget from Phase 1E)
+
+### Step 65: Cost formatting utilities
+- Currency formatting: `format_cost(amount: f64, currency: &str) -> String` — e.g. `"€1,247.83"`
+  - Handle common currency symbols: EUR→€, USD→$, GBP→£, fallback to currency code
+  - Thousand separators
+- Percentage formatting: `format_percentage(amount: f64, total: f64) -> String` — e.g. `"49.1%"`
+- Bar chart rendering: `render_bar(fraction: f64, width: usize) -> String` — e.g. `"████████░░"`
+
+**Verification for Phase 4C**:
+- Manual test: navigate to cost explorer with `3` → cost data loads for current month
+- Manual test: period navigation with `[`/`]` → data refreshes for new period
+- Manual test: bar charts render proportionally, total is correct
+- Manual test: with no billing permissions → helpful error message displayed
+- Manual test: switch subscription → cost data clears, re-loads
+- Currency symbols display correctly for EUR, USD, GBP
+- "Other (N services)" grouping works for subscriptions with many services
+
+---
+
+## Phase 4 Relevant Files
+
+- `src/az/commands.rs` — cost command builders (step 54)
+- `src/az/parser.rs` — cost JSON parsers (step 55)
+- `src/providers/cost_provider.rs` — `AzCostProvider` impl (step 57)
+- `src/providers/mod.rs` — re-export (step 57)
+- `src/app.rs` — cost state fields, command dispatch, event handling (steps 58, 59)
+- `src/ui/widgets/cost_explorer.rs` — cost explorer widget (step 60), new file
+- `src/ui/input.rs` — cost explorer keybindings (step 62)
+- `src/ui/layout.rs` — cost explorer layout, breadcrumbs (step 63)
+- `src/domain/cost.rs` — `CostProvider` trait (defined in Phase 1, now implemented)
+- `src/domain/models.rs` — `CostSummary`, `CostPeriod`, `CostLineItem` (ensure fully implemented)
+
+## Phase 4 Dependency Graph
+
+```
+Step 54 (command builders) → Step 55 (parsers)
+                                      │
+Step 56 (cache keys) ─────────→ Step 57 (provider)
+                                      │
+                              ┌───────┤
+                              ▼       ▼
+                     Step 58     Step 59
+                   (dispatch)   (events)
+                              │
+                              ▼
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        Step 60          Step 62          Step 63
+       (widget)      (input handler)     (layout)
+              └───────────────┼───────────────┘
+                              ▼
+                    Step 64 (navigation)
+                    Step 61 (period nav)  ← parallel with 60-63
+                    Step 65 (formatting)  ← parallel with 60-63
+```
+
+
+**Parallelism notes**:
+- Steps 54, 56 can be done in parallel
+- Step 55 depends on 54
+- Step 57 depends on 54, 55, 56
+- Steps 58, 59 together after 57
+- Steps 60, 61, 62, 63, 65 can largely be done in parallel after 58-59
+- Step 64 ties it all together last
+
+## Phase 4 Decisions
+
+- **`az cost-management query` preferred**: Pre-aggregated data is far more efficient than aggregating thousands of consumption records client-side. If the extension isn't installed, show a helpful error rather than falling back silently.
+- **No resource-group drill-down in Phase 4 UI**: The provider supports `get_resource_group_cost` but the UI shows subscription-level only. Drill-down is a future feature.
+- **"Other" grouping**: Services beyond what fits on screen are grouped into a single "Other (N services)" row to keep the view scannable.
+- **Period defaults to current month**: On first navigation to cost explorer, show current month-to-date costs.
+- **New AppState fields**: `cost_summary`, `cost_period`, `cost_selected_index` added to `AppState`.
+
+---
+---
+
+# Cross-Phase Summary
+
+| Phase | Steps | Focus | Key Deliverable |
+|-------|-------|-------|-----------------|
+| 1A | 1–8 | Foundation + infrastructure | Types, executor, parser, cache, config |
+| 1B | 9–12 | Domain + provider layer | AuthProvider trait + implementation |
+| 1C | 13–16 | Application layer | Event loop, command dispatch, main.rs |
+| 1D | 17–26 | TUI layer | Full context switcher UI |
+| 1E | 27–31 | Polish | Loading states, error modals, panic hook |
+| 2A | 32–35 | Crypto primitives | Disk cache, Argon2id, AES-GCM |
+| 2B | 36–38 | Encrypted cache | Master password setup + unlock flow |
+| 2C | 39–42 | Lock + keyring | Inactivity lock, OS keyring, reset password |
+| 3A | 43–45 | Resource infrastructure | Command builders + parsers |
+| 3B | 46–48 | Resource provider | Provider impl + dispatch |
+| 3C | 49–53 | Resource browser UI | Two-pane widget + navigation |
+| 4A | 54–56 | Cost infrastructure | Command builders + parsers |
+| 4B | 57–59 | Cost provider | Provider impl + dispatch |
+| 4C | 60–65 | Cost explorer UI | Bar charts + period navigation |
+
+**Total**: 65 steps across 4 phases.
+
+**Phase independence**: Phase 1 is the foundation. Phases 2, 3, and 4 are independent of each other and can be done in any order after Phase 1. Within each phase, the sub-phases (A → B → C) are sequential.
