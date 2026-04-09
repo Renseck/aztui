@@ -9,4 +9,4 @@ pub use models::{
 };
 pub use auth::AuthProvider;
 pub use resources::ResourceProvider;
-// pub use cost::CostProvider;
+pub use cost::CostProvider;
