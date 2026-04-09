@@ -8,5 +8,5 @@ pub use models::{
     Subscription, SubscriptionState, Tenant,
 };
 pub use auth::AuthProvider;
-// pub use resources::ResourceProvider;
+pub use resources::ResourceProvider;
 // pub use cost::CostProvider;
