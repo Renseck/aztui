@@ -349,7 +349,7 @@ Step 12 (stub security) ─ parallel with 9-10             │
 Step 13 (Command enum) ─┬→ Step 15 (AppState + loop)    │
 Step 14 (Event enum) ───┘           │                    │
                                     ▼                    │
-                          Step 16 (main.rs) ◄────────────┘
+                          Step 16 (main.rs) �-�────────────┘
                                     │
                                     ▼
                     Steps 17-26 (TUI layer, parallelizable)
@@ -998,7 +998,7 @@ Step 45 (cache keys) ──────→ Step 46 (provider)
 - When `state.active_view == View::CostExplorer`:
   - Render title bar with breadcrumb: "aztui > Cost Explorer"
   - Content area: single-pane with header section (subscription, period, total) + scrollable breakdown table
-  - Period navigation arrows rendered as `[ ◂ prev ] [ next ▸ ]` (per wireframe)
+  - Period navigation arrows rendered as `[ �-� prev ] [ next ▸ ]` (per wireframe)
 
 ### Step 64: Navigation to cost explorer
 - Keybinding: `3` key → `Command::NavigateTo(View::CostExplorer)`

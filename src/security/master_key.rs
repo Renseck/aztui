@@ -1,0 +1,1 @@
+// Phase 2 — Argon2id key derivation from master password.

@@ -102,7 +102,7 @@ the architecture supports it via `theme.rs` if needed later.
 | Cursor / selected row marker   | `azure`                        |
 | Cursor row text                | `bright`                       |
 | Active subscription checkmark  | `green`                        |
-| Recent context marker (â—‹)      | `teal`                         |
+| Recent context marker (â-‹)      | `teal`                         |
 | Quick switch match highlight   | `azure_light` (bold)           |
 | Fuzzy match character highlight| `amber`                        |
 | Confirm button [Yes] focused   | `azure` bg, `bright` text      |
@@ -226,7 +226,7 @@ and stored in `AppConfig` or passed to the `Theme` constructor.
 - All text colors maintain a minimum contrast ratio of 4.5:1 against their
   background (WCAG AA).
 - Error and warning states never rely on color alone â€” they also use symbols
-  (âš , âœ—) and text labels.
+  (âš , âœ-) and text labels.
 - The `dimmed` color for disabled items is still distinguishable from the
   background; it does not disappear.
 

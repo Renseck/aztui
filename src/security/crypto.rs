@@ -1,0 +1,1 @@
+// Phase 2 - AES-256-GCM encrypt/decrypt for cache-at-rest.
