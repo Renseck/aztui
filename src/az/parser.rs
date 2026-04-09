@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::domain::models::{Subscription, SubscriptionState, Tenant};
+use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
 /* ============================================================================================== */
@@ -107,6 +107,33 @@ pub fn parse_account_list(
     }
 
     Ok((tenants, subscriptions_by_tenant))
+}
+
+/* ============================================================================================== */
+
+/// Parses the output of `az account show` into an [`AzureContext`].
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_account_show(json: &str) -> Result<AzureContext, AppError> {
+    let raw: RawAccount = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("account show: {}", e)))?;
+
+    let tenant = Tenant {
+        id: raw.tenant_id.clone(),
+        // Display name is not available from account show; use GUID as fallback.
+        display_name: raw.tenant_id.clone(),
+        default_domain: String::new(),
+    };
+
+    let subscription = Subscription {
+        id: raw.id,
+        name: raw.name,
+        tenant_id: raw.tenant_id,
+        state: parse_subscription_state(&raw.state),
+    };
+
+    Ok(AzureContext { tenant, subscription })
 }
 
 /* ============================================================================================== */
