@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -177,6 +177,9 @@ async fn run_loop(
         // 2. Poll input (non-block with tick timeout)
         if event::poll(tick).map_err(|e| AppError::unknown(e.to_string()))? {
             if let Ok(CrosstermEvent::Key(key)) = event::read() {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 if let Some(cmd) = handle_input(key, state) {
                     // Handle Esc-in-search sentinel
                     if matches!(&cmd, Command::UpdateSearch(s) if s == "\x1B") {
