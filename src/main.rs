@@ -12,14 +12,15 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::{mpsc, RwLock};
 
-use aztui::app::{dispatch_command, handle_event, AppState, Modal};
+use aztui::app::{dispatch_command, handle_event, AppState, Modal, PasswordMode};
 use aztui::az::SubprocessCliExecutor;
-use aztui::cache::CacheStore;
+use aztui::cache::{DiskCache, DiskCacheData, CacheStore};
 use aztui::command::Command;
 use aztui::config::AppConfig;
 use aztui::errors::AppError;
 use aztui::event::Event;
 use aztui::providers::AzAuthProvider;
+use aztui::security::SecurityManager;
 use aztui::ui::{handle_input, render, Theme};
 
 /* ============================================================================================== */
@@ -29,6 +30,10 @@ struct Cli {
     /// Path to config file (default: ~/.aztui/config.toml)
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
+
+    /// Reset the master password (re-run setup flow).
+    #[arg(long)]
+    reset_password: bool,
 }
 
 /* ============================================================================================== */
@@ -46,8 +51,28 @@ async fn main() -> Result<(), AppError> {
     let config = AppConfig::load(cli.config)?;
     let theme = Theme::detect();
 
+    // Security
+    let mut security =SecurityManager::new(&config.security, & config.general.data_dir)?;
+
+    if cli.reset_password {
+        security.reset()?;
+        eprintln!("Master password has been reset. You will be prompted to set a new one.");
+    }
+
+    // Try OS keyring unlock before starting the TUI.
+    let keyring_unlocked = security.try_keyring_unlock().unwrap_or(false);
+
+    // Disk cache
+    let disk_cache = DiskCache::new(&config.general.data_dir);
+    let preloaded = if security.is_unlocked() || !security.is_enabled() {
+        disk_cache.load(&security, config.cache.context_hard_ttl).unwrap_or(None)
+    } else {
+        None // Can't decrypt yet - will load after unlock.
+    };
+
     // Infrastructure
-    let executor: Arc<dyn aztui::az::AzCliExecutor> = Arc::new(SubprocessCliExecutor::new(config.cli.az_path.clone())?);
+    let executor: Arc<dyn aztui::az::AzCliExecutor> = 
+        Arc::new(SubprocessCliExecutor::new(config.cli.az_path.clone())?);
     let cache = Arc::new(RwLock::new(CacheStore::new()));
     let auth: Arc<dyn aztui::domain::AuthProvider> = Arc::new(AzAuthProvider::new(
         Arc::clone(&executor),
@@ -55,7 +80,29 @@ async fn main() -> Result<(), AppError> {
         config.cache.clone(),
     ));
 
-    let mut state = AppState::new(config);
+    let mut state = AppState::new(config.clone(), security);
+
+    // Populate state from disk cache if available.
+    if let Some(data) = preloaded {
+        state.tenants = data.tenants;
+        state.subscriptions_by_tenant = data.subscription_by_tenant;
+        state.recent_contexts = data.recent_contexts;
+    }
+
+    // If security is enabled and not yet unlocked, show the appropriate modal.
+    if state.security.is_enabled() && !state.security.is_unlocked() {
+        let mode = if state.security.needs_setup() {
+            PasswordMode::Setup
+        } else {
+            PasswordMode::Unlock
+        };
+        state.modal = Some(aztui::app::Modal::PasswordPrompt {
+            input: String::new(),
+            error: None,
+            mode,
+        });
+        state.locked = true;
+    }
 
      // Channels
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(64);
@@ -69,12 +116,14 @@ async fn main() -> Result<(), AppError> {
     let mut terminal =
         Terminal::new(backend).map_err(|e| AppError::unknown(e.to_string()))?;
 
-    // Bootstrap: load context list and active context on startup.
-    cmd_tx
-        .send(Command::RefreshContextList)
-        .await
-        .map_err(|e| AppError::unknown(e.to_string()))?;
-
+    // Bootstrap: only load context list if not locked (otherwise, will load after unlock).
+    if !state.locked {
+        cmd_tx
+            .send(Command::RefreshContextList)
+            .await
+            .map_err(|e| AppError::unknown(e.to_string()))?;
+    }
+    
     let tick_duration = Duration::from_millis(100);
     let result = run_loop(
         &mut terminal,
@@ -88,6 +137,16 @@ async fn main() -> Result<(), AppError> {
         tick_duration,
     )
     .await;
+
+    // Save cache to disk on graceful shutdown.
+    let cache_data = DiskCacheData::from_state(
+        &state.tenants,
+        &state.subscriptions_by_tenant,
+        &state.recent_contexts,
+    );
+    if let Err(e) = disk_cache.save(&cache_data, &state.security) {
+        eprintln!("Warning: failed to save cache: {}", e);
+    }
 
     // Cleanup terminal regardless of result.
     disable_raw_mode().ok();
