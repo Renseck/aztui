@@ -69,10 +69,9 @@ pub fn parse_account_list(
         // Create or reuse tenant entry.
         if !tenants_map.contains_key(&tid) {
             let (display_name, default_domain) =
-                tenant_info.get(&tid).cloned().unwrap_or_else(|| {
-                    // Fall back to home_tenant_id domain hint or GUID.
-                    (tid.clone(), String::new())
-                });
+                tenant_info.get(&tid).cloned()
+                    .filter(|(dn, _)| !dn.is_empty())
+                    .unwrap_or_else(|| (tid.clone(), String::new()));
 
             tenants_map.insert(
                 tid.clone(),
