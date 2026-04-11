@@ -25,6 +25,9 @@ pub enum Command {
     /// Switch to a full context (tenant + subscription) in one action.
     SwitchContext(AzureContext),
 
+    /// Fetch the currently active context from `az account show --output json`.
+    FetchActiveContext,
+
     /* ======================================= Navigation ======================================= */
 
     /// Change the active top-level view.

@@ -435,6 +435,16 @@ pub async fn dispatch_command(
             state.pending_operations.insert(op_id, op);
         }
 
+        Command::FetchActiveContext => {
+            let tx = cmd_tx.clone();
+            let auth = Arc::clone(&auth);
+
+            tokio::spawn(async move {
+                let result = auth.get_active_context().await;
+                let _ = tx.send(Command::ActiveContextResult(result)).await;
+            });
+        }
+
         /* ================================ Async: switch context =============================== */
 
         Command::SwitchContext(ctx) => {
@@ -528,6 +538,12 @@ pub async fn dispatch_command(
                         state.context_list_cursor = total_subs - 1;
                     }
                     events.push(Event::ContextListRefreshed);
+
+                    // If no active context is known yet, fetch it.
+                    if state.active_context.is_none() {
+                        let tx = cmd_tx.clone();
+                        let _ = tx.try_send(Command::FetchActiveContext);
+                    }
                 }
                 Err(e) => {
                     state.last_error = Some(e.clone());
