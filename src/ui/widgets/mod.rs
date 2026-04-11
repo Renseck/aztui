@@ -3,3 +3,5 @@ pub mod modal;
 pub mod quick_switch;
 pub mod search_input;
 pub mod status_bar;
+
+pub use status_bar::{SPINNER_CHARS};

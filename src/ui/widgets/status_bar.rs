@@ -6,7 +6,7 @@ use ratatui::Frame;
 use crate::app::AppState;
 use crate::ui::theme::Theme;
 
-const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /* ============================================================================================== */
 /// Renders the single-row status bar at the bottom (or top) of the screen.
