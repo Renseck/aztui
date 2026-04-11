@@ -26,9 +26,9 @@ struct RawAccount {
 struct RawTenant {
     tenant_id: String,
     #[serde(default)]
-    display_name: String,
+    tenant_display_name: String,
     #[serde(default)]
-    default_domain: String,
+    tenant_default_domain: String,
 }
 
 /* ============================================================================================== */
@@ -55,7 +55,7 @@ pub fn parse_account_list(
     if let Some(tj) = tenant_json {
         if let Ok(raw_tenants) = serde_json::from_str::<Vec<RawTenant>>(tj) {
             for rt in raw_tenants {
-                tenant_info.insert(rt.tenant_id.clone(), (rt.display_name, rt.default_domain));
+                tenant_info.insert(rt.tenant_id.clone(), (rt.tenant_display_name, rt.tenant_default_domain));
             }
         }
     }
@@ -193,13 +193,13 @@ mod tests {
     const TENANT_LIST_JSON: &str = r#"[
         {
             "tenantId": "tenant-a-guid",
-            "displayName": "Contoso Ltd",
-            "defaultDomain": "contoso.onmicrosoft.com"
+            "tenantDisplayName": "Contoso Ltd",
+            "tenantDefaultDomain": "contoso.onmicrosoft.com"
         },
         {
             "tenantId": "tenant-b-guid",
-            "displayName": "Fabrikam Inc",
-            "defaultDomain": "fabrikam.onmicrosoft.com"
+            "tenantDisplayName": "Fabrikam Inc",
+            "tenantDefaultDomain": "fabrikam.onmicrosoft.com"
         }
     ]"#;
 
