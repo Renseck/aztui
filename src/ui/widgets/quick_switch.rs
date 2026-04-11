@@ -1,0 +1,178 @@
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
+
+use crate::app::{AppState, Modal};
+use crate::domain::models::AzureContext;
+use crate::ui::theme::Theme;
+use crate::ui::widgets::modal::render_modal_frame;
+
+/* ============================================================================================== */
+/// Renders the Ctrl+P quick switch modal overlay.
+pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
+    let (query, filtered, cursor) = match &state.modal {
+        Some(Modal::QuickSwitch { query, filtered, cursor }) => {
+            (query.clone(), filtered.clone(), *cursor)
+        }
+        _ => return,
+    };
+
+    let area = frame.area();
+    let modal_w = (area.width as u32 * 65 / 100).min(area.width as u32) as u16;
+    let modal_h = (filtered.len() as u16 + 8).min(area.height - 4).max(10);
+
+    let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    use ratatui::widgets::Clear;
+    frame.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .title(" Switch context ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.modal_border_style())
+        .style(theme.surface_style());
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    // Split inner: search input, list, footer hint
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // search
+            Constraint::Length(1), // spacer
+            Constraint::Min(1),    // list
+            Constraint::Length(1), // hints
+        ])
+        .split(inner);
+
+    // Search input
+    let cursor_char = "_";
+    let search_line = Line::from(vec![
+        Span::styled("  ", theme.hint_style()),
+        Span::styled(&query, theme.surface_style().fg(theme.bright).add_modifier(Modifier::BOLD)),
+        Span::styled(cursor_char, theme.surface_style().fg(theme.azure_light)),
+    ]);
+    frame.render_widget(Paragraph::new(search_line).style(theme.surface_style()), layout[0]);
+
+    // Divider
+    let divider = "─".repeat(inner.width as usize);
+    frame.render_widget(
+        Paragraph::new(divider).style(theme.surface_style().fg(theme.muted)),
+        layout[1],
+    );
+
+    // Filtered list
+    let recent_ids: Vec<String> = state
+        .recent_contexts
+        .iter()
+        .map(|c| c.subscription.id.clone())
+        .collect();
+
+    let recent: Vec<&AzureContext> = filtered
+        .iter()
+        .filter(|c| recent_ids.contains(&c.subscription.id))
+        .collect();
+
+    let all_non_recent: Vec<&AzureContext> = filtered
+        .iter()
+        .filter(|c| !recent_ids.contains(&c.subscription.id))
+        .collect();
+
+    let mut list_items: Vec<ListItem> = Vec::new();
+    let mut item_idx = 0usize;
+
+    if !recent.is_empty() {
+        list_items.push(ListItem::new(Line::from(Span::styled(
+            "  RECENT",
+            theme.hint_style().add_modifier(Modifier::BOLD),
+        ))));
+        for ctx in &recent {
+            let style = if item_idx == cursor {
+                theme.selected_style()
+            } else {
+                theme.surface_style().fg(theme.text)
+            };
+            list_items.push(ListItem::new(Line::from(Span::styled(
+                format!("  {}", ctx.label()),
+                style,
+            ))));
+            item_idx += 1;
+        }
+        list_items.push(ListItem::new(Line::from("")));
+    }
+
+    if !all_non_recent.is_empty() {
+        list_items.push(ListItem::new(Line::from(Span::styled(
+            "  ALL MATCHES",
+            theme.hint_style().add_modifier(Modifier::BOLD),
+        ))));
+        for ctx in &all_non_recent {
+            let style = if item_idx == cursor {
+                theme.selected_style()
+            } else {
+                theme.surface_style().fg(theme.text)
+            };
+            list_items.push(ListItem::new(Line::from(Span::styled(
+                format!("  {}", ctx.label()),
+                style,
+            ))));
+            item_idx += 1;
+        }
+    }
+
+    let list = List::new(list_items).style(theme.surface_style());
+    frame.render_widget(list, layout[2]);
+
+    // Footer hints
+    let hints = Line::from(vec![Span::styled(
+        "  Enter: switch   Esc: cancel",
+        theme.hint_style(),
+    )]);
+    frame.render_widget(Paragraph::new(hints).style(theme.surface_style()), layout[3]);
+}
+
+/* ============================================================================================== */
+/// Builds the filtered context list for the quick switch modal.
+pub fn build_filtered(state: &AppState, query: &str) -> Vec<AzureContext> {
+    let q = query.to_lowercase();
+    state
+        .tenants
+        .iter()
+        .flat_map(|tenant| {
+            state
+                .subscriptions_by_tenant
+                .get(&tenant.id)
+                .into_iter()
+                .flatten()
+                .filter(|sub| {
+                    if q.is_empty() {
+                        return true;
+                    }
+                    sub.name.to_lowercase().contains(&q)
+                        || tenant.display_name.to_lowercase().contains(&q)
+                        || sub.id.to_lowercase().contains(&q)
+                })
+                .map(|sub| AzureContext {
+                    tenant: tenant.clone(),
+                    subscription: sub.clone(),
+                })
+        })
+        .collect()
+}
+
+/* ============================================================================================== */
+/// Returns the [`AzureContext`] at the quick switch cursor position, if any.
+/// Skips section header rows (RECENT / ALL MATCHES).
+pub fn selected_context(state: &AppState) -> Option<AzureContext> {
+    let (filtered, cursor) = match &state.modal {
+        Some(Modal::QuickSwitch { filtered, cursor, .. }) => (filtered.clone(), *cursor),
+        _ => return None,
+    };
+    filtered.into_iter().nth(cursor)
+}
