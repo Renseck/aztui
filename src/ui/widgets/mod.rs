@@ -4,4 +4,5 @@ pub mod quick_switch;
 pub mod search_input;
 pub mod status_bar;
 
+pub use modal::{ModalPosition};
 pub use status_bar::{SPINNER_CHARS};

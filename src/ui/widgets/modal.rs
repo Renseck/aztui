@@ -1,11 +1,22 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{AppState, Modal};
 use crate::ui::theme::Theme;
+
+/* ============================================================================================== */
+/// Controls where a modal is positioned on screen.
+pub enum ModalPosition {
+    Center,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    /// Place the modal's top-left corner at a specific coordinate.
+    At { x: u16, y: u16 },
+}
 
 /* ============================================================================================== */
 /// Renders a centered modal box on top of the existing content.
@@ -16,6 +27,7 @@ pub fn render_modal_frame(
     frame: &mut Frame,
     title: &str,
     footer: Option<&str>,
+    position: ModalPosition,
     width_pct: u16,
     height: u16,
     theme: &Theme,
@@ -26,10 +38,29 @@ pub fn render_modal_frame(
     let modal_width = (area.width as u32 * width_pct as u32 / 100).min(area.width as u32) as u16;
     let modal_height = height.min(area.height - 4);
 
-    // ? modal: expose position presets as argument ~ 0: center, 1: top left, 2: bottom left, 3: bottom right, 4: top right?
-    // ? modal: Or perhaps pick from an enum? Also let caller specificy x, y to spawn modals exactly on cursor?
-    let x = area.x + (area.width.saturating_sub(modal_width)) / 2;
-    let y = area.x + (area.height.saturating_sub(modal_height)) / 2;
+    let (x, y) = match position {
+        ModalPosition::Center => (
+            area.x + (area.width.saturating_sub(modal_width)) / 2,
+            area.y + (area.width.saturating_sub(modal_height)) / 2,
+        ),
+        ModalPosition::TopLeft => (
+            area.x + 1,
+            area.y + 1,
+        ),
+        ModalPosition::TopRight => (
+            area.x + area.width.saturating_sub(modal_width + 1),
+            area.y + 1,
+        ),
+        ModalPosition::BottomLeft => (
+            area.x + 1,
+            area.y + (area.width.saturating_sub(modal_height + 1)),
+        ),
+        ModalPosition::BottomRight => (
+            area.x + area.width.saturating_sub(modal_width + 1),
+            area.y + (area.width.saturating_sub(modal_height + 1)),
+        ),
+        ModalPosition::At { x, y } => (x, y),
+    };
 
     let modal_area = Rect::new(x, y, modal_width, modal_height);
 
@@ -77,6 +108,7 @@ pub fn render_error_detail(frame: &mut Frame, state: &AppState, theme: &Theme) {
         frame,
         &format!("⚠  {}", error.kind_label()),
         Some("Esc: close"),
+        ModalPosition::Center,
         65,
         14,
         theme,
@@ -135,6 +167,7 @@ pub fn render_confirm(frame: &mut Frame, state: &AppState, theme: &Theme) {
         frame,
         "Confirm",
         Some("Enter: confirm   Esc: cancel"),
+        ModalPosition::Center,
         50,
         10,
         theme,

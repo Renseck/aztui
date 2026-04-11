@@ -1,13 +1,13 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{AppState, Modal};
 use crate::domain::models::AzureContext;
 use crate::ui::theme::Theme;
-use crate::ui::widgets::modal::render_modal_frame;
+use crate::ui::widgets::modal::{render_modal_frame, ModalPosition};
 
 /* ============================================================================================== */
 /// Renders the Ctrl+P quick switch modal overlay.
@@ -19,26 +19,19 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
         _ => return,
     };
 
-    let area = frame.area();
-    let modal_w = (area.width as u32 * 65 / 100).min(area.width as u32) as u16;
-    let modal_h = (filtered.len() as u16 + 8).min(area.height - 4).max(10);
+     let modal_h = (filtered.len() as u16 + 8).min(frame.area().height - 4).max(10);
 
-    let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
-    let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
-    let modal_area = Rect::new(x, y, modal_w, modal_h);
-
-    use ratatui::widgets::Clear;
-    frame.render_widget(Clear, modal_area);
-
-    let block = Block::default()
-        .title(" Switch context ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.modal_border_style())
-        .style(theme.surface_style());
-
-    let inner = block.inner(modal_area);
-    frame.render_widget(block, modal_area);
+    let inner = render_modal_frame(
+        frame,
+        "Switch context",
+        Some("Enter: switch   Esc: cancel"),
+        ModalPosition::Center,
+        65,
+        modal_h,
+        theme,
+        theme.modal_border_style(),
+        
+    );
 
     // Split inner: search input, list, footer hint
     let layout = Layout::default()
