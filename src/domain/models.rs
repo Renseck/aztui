@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: String,
-    pub display_name: String,
-    pub default_domain: String,
+    pub tenant_display_name: String,
+    pub tenant_default_domain: String,
 }
 
 /* ============================================================================================== */
@@ -85,7 +85,7 @@ pub struct AzureContext {
 impl AzureContext {
     /// Returns a human-readable label: "Tenant Name / Subscription Name".
     pub fn label(&self) -> String {
-        format!("{} / {}", self.tenant.display_name, self.subscription.name)
+        format!("{} / {}", self.tenant.tenant_display_name, self.subscription.name)
     }
 }
 

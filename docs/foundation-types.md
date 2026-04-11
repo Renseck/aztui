@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tenant {
     pub id: String,            // GUID
-    pub display_name: String,
-    pub default_domain: String, // e.g. "contoso.onmicrosoft.com"
+    pub tenant_display_name: String,
+    pub tenant_default_domain: String, // e.g. "contoso.onmicrosoft.com"
 }
 
 /// A normalized Azure subscription.

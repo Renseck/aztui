@@ -230,10 +230,10 @@ fn render_item<'a>(
 ) -> ListItem<'a> {
     match item {
         ContextItem::TenantHeader(tenant) => {
-            let label = if tenant.default_domain.is_empty() {
-                format!("  ▸ {}", tenant.display_name)
+            let label = if tenant.tenant_default_domain.is_empty() {
+                format!("  ▸ {}", tenant.tenant_display_name)
             } else {
-                format!("  ▸ {}  ({})", tenant.display_name, tenant.default_domain)
+                format!("  ▸ {}  ({})", tenant.tenant_display_name, tenant.tenant_default_domain)
             };
             ListItem::new(Line::from(Span::styled(label, theme.tenant_header_style())))
         }

@@ -68,7 +68,7 @@ pub fn parse_account_list(
 
         // Create or reuse tenant entry.
         if !tenants_map.contains_key(&tid) {
-            let (display_name, default_domain) =
+            let (tenant_display_name, tenant_default_domain) =
                 tenant_info.get(&tid).cloned()
                     .filter(|(dn, _)| !dn.is_empty())
                     .unwrap_or_else(|| (tid.clone(), String::new()));
@@ -77,8 +77,8 @@ pub fn parse_account_list(
                 tid.clone(),
                 Tenant {
                     id: tid.clone(),
-                    display_name,
-                    default_domain,
+                    tenant_display_name,
+                    tenant_default_domain,
                 },
             );
         }
@@ -98,7 +98,7 @@ pub fn parse_account_list(
 
     // Sort tenants by display name for stable ordering.
     let mut tenants: Vec<Tenant> = tenants_map.into_values().collect();
-    tenants.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    tenants.sort_by(|a, b| a.tenant_display_name.cmp(&b.tenant_display_name));
 
     // Sort subscriptions within each tenant alphabetically.
     for subs in subscriptions_by_tenant.values_mut() {
@@ -121,8 +121,8 @@ pub fn parse_account_show(json: &str) -> Result<AzureContext, AppError> {
     let tenant = Tenant {
         id: raw.tenant_id.clone(),
         // Display name is not available from account show; use GUID as fallback.
-        display_name: raw.tenant_id.clone(),
-        default_domain: String::new(),
+        tenant_display_name: raw.tenant_id.clone(),
+        tenant_default_domain: String::new(),
     };
 
     let subscription = Subscription {
@@ -219,15 +219,15 @@ mod tests {
             parse_account_list(ACCOUNT_LIST_JSON, Some(TENANT_LIST_JSON)).unwrap();
 
         let contoso = tenants.iter().find(|t| t.id == "tenant-a-guid").unwrap();
-        assert_eq!(contoso.display_name, "Contoso Ltd");
-        assert_eq!(contoso.default_domain, "contoso.onmicrosoft.com");
+        assert_eq!(contoso.tenant_display_name, "Contoso Ltd");
+        assert_eq!(contoso.tenant_default_domain, "contoso.onmicrosoft.com");
     }
 
     #[test]
     fn parse_account_list_falls_back_to_guid_without_tenant_list() {
         let (tenants, _) = parse_account_list(ACCOUNT_LIST_JSON, None).unwrap();
         let t = tenants.iter().find(|t| t.id == "tenant-a-guid").unwrap();
-        assert_eq!(t.display_name, "tenant-a-guid");
+        assert_eq!(t.tenant_display_name, "tenant-a-guid");
     }
 
     #[test]

@@ -148,7 +148,7 @@ pub fn build_filtered(state: &AppState, query: &str) -> Vec<AzureContext> {
                         return true;
                     }
                     sub.name.to_lowercase().contains(&q)
-                        || tenant.display_name.to_lowercase().contains(&q)
+                        || tenant.tenant_display_name.to_lowercase().contains(&q)
                         || sub.id.to_lowercase().contains(&q)
                 })
                 .map(|sub| AzureContext {
