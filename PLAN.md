@@ -1,5 +1,9 @@
 # PLAN.md — aztui Phase 1 Implementation Roadmap
 
+<!-- =========================================================================================== -->
+<!--                                        PHASE 1 DONE                                         -->
+<!-- =========================================================================================== -->
+
 ## Plan: Phase 1 — Skeleton + Tenant/Subscription Switcher
 
 **TL;DR**: Implement the end-to-end TUI that lets operators list tenants/subscriptions, select one, and have `az login --tenant` + `az account set --subscription` run behind the scenes. Build bottom-up from infrastructure → domain → application → UI, validating each layer with tests before moving up.
@@ -349,7 +353,7 @@ Step 12 (stub security) ─ parallel with 9-10             │
 Step 13 (Command enum) ─┬→ Step 15 (AppState + loop)    │
 Step 14 (Event enum) ───┘           │                    │
                                     ▼                    │
-                          Step 16 (main.rs) �-�────────────┘
+                          Step 16 (main.rs) �-�────────────┘
                                     │
                                     ▼
                     Steps 17-26 (TUI layer, parallelizable)
@@ -456,6 +460,9 @@ Step 14 (Event enum) ───┘           │                    │
 2. **Async command results**: The architecture sketch shows async tasks sending results back via the command channel. Need to decide on exact mechanism — recommendation: define internal `Command` variants like `_ContextListResult(Result<...>)` prefixed with underscore to indicate they're system-generated, not user-initiated. Alternative: use a separate result channel.
 3. **List navigation commands**: The `Command` enum in foundation-types.md doesn't include `MoveUp`/`MoveDown` navigation commands. These could be handled purely in the UI layer (widget state) rather than as full Commands, or we add `NavigateList(Direction)` variants. Recommendation: handle in UI layer since list navigation doesn't need to go through the full Command→Event cycle.
 
+<!-- =========================================================================================== -->
+<!--                                        PHASE 1 DONE                                         -->
+<!-- =========================================================================================== -->
 
 ---
 
@@ -998,7 +1005,7 @@ Step 45 (cache keys) ──────→ Step 46 (provider)
 - When `state.active_view == View::CostExplorer`:
   - Render title bar with breadcrumb: "aztui > Cost Explorer"
   - Content area: single-pane with header section (subscription, period, total) + scrollable breakdown table
-  - Period navigation arrows rendered as `[ �-� prev ] [ next ▸ ]` (per wireframe)
+  - Period navigation arrows rendered as `[ �-� prev ] [ next ▸ ]` (per wireframe)
 
 ### Step 64: Navigation to cost explorer
 - Keybinding: `3` key → `Command::NavigateTo(View::CostExplorer)`
