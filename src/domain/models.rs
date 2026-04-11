@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize}
 
 /// A normalized Azure tenant.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: String,
     pub display_name: String,
@@ -11,7 +12,7 @@ pub struct Tenant {
 /* ============================================================================================== */
 
 /// A normalized Azure subscription.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
     pub name: String,
@@ -21,7 +22,7 @@ pub struct Subscription {
 
 /* ============================================================================================== */
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SubscriptionState {
     Enabled,
     Disabled,
@@ -75,7 +76,7 @@ pub struct Resource {
 /* ============================================================================================== */
 
 /// Represents the user's current working context in Azure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AzureContext {
     pub tenant: Tenant,
     pub subscription: Subscription,
