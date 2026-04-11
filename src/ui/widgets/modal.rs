@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{AppState, Modal};
+use crate::app::{AppState, Modal, PasswordMode};
 use crate::ui::theme::Theme;
 
 /* ============================================================================================== */
@@ -94,6 +94,70 @@ pub fn render_modal_frame(
         frame.render_widget(block, modal_area);
         inner
     }
+}
+
+/* ============================================================================================== */
+/// Renders the master password prompt modal (unlock or setup).
+pub fn render_password_prompt(frame: &mut Frame, state: &AppState, theme: &Theme) {
+    let (input, error, mode) = match &state.modal {
+        Some(Modal::PasswordPrompt { input, error, mode }) => {
+            (input.clone(), error.clone(), mode.clone())
+        }
+        _ => return,
+    };
+
+    let title = match &mode {
+        PasswordMode::Unlock => "aztui is locked",
+        PasswordMode::Setup => "Set master password",
+        PasswordMode::SetupConfirm { .. } => "Confirm master password",
+    };
+
+    let footer = match &mode {
+        PasswordMode::Unlock => "Enter: unlock   q: quit",
+        PasswordMode::Setup | PasswordMode::SetupConfirm { .. } => "Enter: confirm   Esc: back",
+    };
+
+    let height = if error.is_some() { 10 } else { 8 };
+
+    let inner = render_modal_frame(
+        frame,
+        title,
+        Some(footer),
+        ModalPosition::Center,
+        50,
+        height,
+        theme,
+        theme.modal_border_style(),
+    );
+
+    let masked: String = "\u{2022}".repeat(input.len()); // bullet dots
+    let cursor = "_";
+
+    let prompt_label = match &mode {
+        PasswordMode::Unlock => "  Password: ",
+        PasswordMode::Setup => "  New password: ",
+        PasswordMode::SetupConfirm { .. } => "  Confirm: ",
+    };
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(prompt_label, theme.surface_style().fg(theme.text)),
+            Span::styled(masked, theme.surface_style().fg(theme.azure_light)),
+            Span::styled(cursor, theme.surface_style().fg(theme.azure_light)),
+        ]),
+    ];
+
+    if let Some(err_msg) = &error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", err_msg),
+            theme.error_style(),
+        )));
+    }
+
+    let para = Paragraph::new(lines).style(theme.surface_style());
+    frame.render_widget(para, inner);
 }
 
 /* ============================================================================================== */

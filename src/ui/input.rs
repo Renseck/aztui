@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{AppState, Modal, View};
+use crate::app::{AppState, Modal, PasswordMode, View};
 use crate::command::Command;
 use crate::ui::widgets::{context_switcher, quick_switch};
 
@@ -10,6 +10,9 @@ use crate::ui::widgets::{context_switcher, quick_switch};
 pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     // Locked: only allow password input (Phase 2) or quit.
     if state.locked {
+        if let Some(Modal::PasswordPrompt { .. }) = &state.modal {
+            return handle_password_input(key, state);
+        }
         return match key.code {
             KeyCode::Char('q') => Some(Command::Quit),
             _ => None,
@@ -143,11 +146,7 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
             KeyCode::Esc | KeyCode::Enter => Some(Command::CloseModal),
             _ => None,
         },
-        Modal::PasswordPrompt => match key.code {
-            KeyCode::Char('q') => Some(Command::Quit),
-            KeyCode::Esc => Some(Command::CloseModal),
-            _ => None,
-        },
+        Modal::PasswordPrompt { .. } => handle_password_input(key, state),
     }
 }
 
@@ -193,6 +192,85 @@ fn handle_quick_switch_input(
                 query: q, 
                 filtered: new_filtered, 
                 cursor: 0 
+            })))
+        }
+
+        _ => None,
+    }
+}
+
+/* ============================================================================================== */
+fn handle_password_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    let (input, mode) = match &state.modal {
+        Some(Modal::PasswordPrompt { input, mode, .. }) => (input.clone(), mode.clone()),
+        _ => return None,
+    };
+
+    match key.code {
+        KeyCode::Char('q') if input.is_empty() => Some(Command::Quit),
+
+        KeyCode::Esc => {
+            // In unlock mode, Esc does nothing (must enter password or quit).
+            // In setup mode, Esc goes back to the first entry step.
+            match &mode {
+                PasswordMode::SetupConfirm { .. } => {
+                    Some(Command::OpenModal(Box::new(Modal::PasswordPrompt {
+                        input: String::new(),
+                        error: None,
+                        mode: PasswordMode::Setup,
+                    })))
+                }
+                _ => None,
+            }
+        }
+
+        KeyCode::Enter => {
+            if input.is_empty() {
+                return None;
+            }
+            match &mode {
+                PasswordMode::Unlock => Some(Command::Unlock(input)),
+                PasswordMode::Setup => {
+                    // Move to confirmation step.
+                    Some(Command::OpenModal(Box::new(Modal::PasswordPrompt {
+                        input: String::new(),
+                        error: None,
+                        mode: PasswordMode::SetupConfirm {
+                            first_password: input,
+                        },
+                    })))
+                }
+                PasswordMode::SetupConfirm { first_password } => {
+                    if input == *first_password {
+                        Some(Command::SetupPassword(input))
+                    } else {
+                        Some(Command::OpenModal(Box::new(Modal::PasswordPrompt {
+                            input: String::new(),
+                            error: Some("Passwords do not match. Try again.".into()),
+                            mode: PasswordMode::Setup,
+                        })))
+                    }
+                }
+            }
+        }
+
+        KeyCode::Backspace => {
+            let mut new_input = input;
+            new_input.pop();
+            Some(Command::OpenModal(Box::new(Modal::PasswordPrompt {
+                input: new_input,
+                error: None,
+                mode,
+            })))
+        }
+
+        KeyCode::Char(c) => {
+            let mut new_input = input;
+            new_input.push(c);
+            Some(Command::OpenModal(Box::new(Modal::PasswordPrompt {
+                input: new_input,
+                error: None,
+                mode,
             })))
         }
 

@@ -12,6 +12,7 @@ use crate::domain::auth::{self, AuthProvider};
 use crate::domain::models::{AzureContext, Subscription, Tenant};
 use crate::errors::AppError;
 use crate::event::Event;
+use crate::security::{self, SecurityManager};
 
 /* ============================================================================================== */
 /*                                        Supporting types                                        */
@@ -44,8 +45,24 @@ pub enum Modal {
         message: String,
         on_confirm: Box<Command>,
     },
-    PasswordPrompt,
+    PasswordPrompt {
+        input: String,
+        error: Option<String>,
+        mode: PasswordMode,
+    },
     ErrorDetail(AppError),
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Clone)]
+pub enum PasswordMode {
+    /// Unlock with existing master password.
+    Unlock,
+    /// Setting up a new master password (first entry).
+    Setup,
+    /// Confirming the new master password (holds the first entry for comparison).
+    SetupConfirm { first_password: String },
+
 }
 
 /* ============================================================================================== */
@@ -87,6 +104,7 @@ pub struct AppState {
     // Security
     pub locked: bool,
     pub last_interaction: Instant,
+    pub security: SecurityManager,
 
     // Config
     pub config: AppConfig,
@@ -103,7 +121,9 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new [`AppState`] from the given config.
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: AppConfig, security: SecurityManager) -> Self {
+        let locked = security.is_enabled() && !security.is_unlocked();
+
         Self {
             tenants: Vec::new(),
             subscriptions_by_tenant: HashMap::new(),
@@ -116,7 +136,8 @@ impl AppState {
             context_list_cursor: 0,
             pending_operations: HashMap::new(),
             next_operation_id: 0,
-            locked: false,
+            locked,
+            security,
             last_interaction: Instant::now(),
             config,
             last_error: None,
@@ -237,13 +258,115 @@ pub async fn dispatch_command(
 
         Command::Lock => {
             state.locked = true;
+            state.security.lock();
+            // Clear sensitive state on lock.
+            state.tenants.clear();
+            state.subscriptions_by_tenant.clear();
+            state.active_context = None;
+            state.modal = Some(Modal::PasswordPrompt { 
+                input: String::new(), 
+                error: None, 
+                mode: PasswordMode::Unlock 
+            });
             events.push(Event::AppLocked);
         }
 
-        Command::Unlock(_password) => {
-            // TODO Phase 2: verify password. For now, just unlock straight away
-            state.locked = false;
-            events.push(Event::AppUnlocked)
+        Command::Unlock(password) => {
+            if let Some(params) = state.security.stored_params().cloned() {
+                let tx = cmd_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = crate::security::master_key::derive_and_verify(&password, &params);
+                    let mapped = result
+                        .map(|key| crate::security::DerivedKey(key.to_vec()))
+                        .map_err(|e| e);
+                    // Send result back - blocking send since we're in spawn_blocking.
+                    let _ = tx.blocking_send(Command::UnlockResult(mapped));
+                });
+            } else {
+                // No stored params - shouldn't happen, but unlock to be safe.
+                state.locked = false;
+                state.modal = None;
+                events.push(Event::AppUnlocked);
+                events.push(Event::ModalClosed);
+            }   
+        }
+
+        Command::SetupPassword(password) => {
+            let tx = cmd_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let result = crate::security::master_key::create_params_and_key(&password);
+                let mapped = result.map(|(params, key)| {
+                    (params, crate::security::DerivedKey(key.to_vec()))
+                });
+                let _ = tx.blocking_send(Command::SetupPasswordResult(mapped));
+            });
+        }
+
+        Command::ResetPassword => {
+            if let Err(e) = state.security.reset() {
+                state.last_error = Some(e.clone());
+                events.push(Event::ErrorOccurred(e));
+            } else {
+                state.locked = true;
+                state.modal = Some(Modal::PasswordPrompt { 
+                    input: String::new(), 
+                    error: None, 
+                    mode: PasswordMode::Setup
+                });
+            }
+        }
+
+        Command::UnlockResult(result) => {
+            match result {
+                Ok(derived_key) => {
+                    if let Some(key_arr) = derived_key.as_array() {
+                        state.security.set_key(*key_arr);
+                        // Store to keyring if enabled.
+                        let _ = state.security.store_to_keyring();
+                    }
+                    state.locked = false;
+                    state.modal = None;
+                    events.push(Event::ModalClosed);
+                    events.push(Event::AppUnlocked);
+                    // Trigger context list refresh now that we're unlocked.
+                    let tx = cmd_tx.clone();
+                    let _ = tx.try_send(Command::RefreshContextList);
+                }
+                Err(e) => {
+                    // Update the password modal with the error message.
+                    if let Some(Modal::PasswordPrompt { error, .. }) = state.modal.as_mut() {
+                        *error = Some(e.message.clone());
+                    }
+                    events.push(Event::UnlockFailed);
+                }
+            }
+        }
+
+        Command::SetupPasswordResult(result) => {
+            match result {
+                Ok((params, derived_key)) => {
+                    if let Some(key_arr) = derived_key.as_array() {
+                        if let Err(e) = state.security.save_setup(params, *key_arr) {
+                            state.last_error = Some(e.clone());
+                            events.push(Event::ErrorOccurred(e));
+                            return events;
+                        }
+                        let _ = state.security.store_to_keyring();
+                    }
+                    state.locked = false;
+                    state.modal = None;
+                    events.push(Event::ModalClosed);
+                    events.push(Event::AppUnlocked);
+                    let tx = cmd_tx.clone();
+                    let _ = tx.try_send(Command::RefreshContextList);
+                }
+                Err(e) => {
+                    if let Some(Modal::PasswordPrompt { error, .. }) = state.modal.as_mut() {
+                        *error = Some(e.message.clone());
+                    }
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
         }
 
         Command::InvalidateAllCaches => {

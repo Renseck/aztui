@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
             Modal::QuickSwitch { .. } => quick_switch::render(frame, state, theme),
             Modal::ErrorDetail(_) => modal::render_error_detail(frame, state, theme),
             Modal::Confirm { .. } => modal::render_confirm(frame, state, theme),
-            Modal::PasswordPrompt => render_password_prompt(frame, state, theme),
+            Modal::PasswordPrompt { .. } => modal::render_password_prompt(frame, state, theme),
         }
     }
 }
@@ -199,27 +199,4 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
 
     let para = Paragraph::new(lines).style(theme.base_style());
     frame.render_widget(para, area);
-}
-
-/* ============================================================================================== */
-fn render_password_prompt(frame: &mut Frame, _state: &AppState, theme: &Theme) {
-    use crate::ui::widgets::modal::{render_modal_frame, ModalPosition};
-
-    let inner = render_modal_frame(
-        frame,
-        "aztui is locked",
-        Some("Enter: unlock   q: quit"),
-        ModalPosition::Center,
-        45,
-        8,
-        theme,
-        theme.modal_border_style(),
-    );
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(vec![Span::styled("  Password: ", theme.surface_style().fg(theme.text))]),
-    ];
-    let para = Paragraph::new(lines).style(theme.surface_style());
-    frame.render_widget(para, inner);
 }
