@@ -136,20 +136,7 @@ impl AzAuthProvider {
             .execute(&account_args, self.cache_config.context_hard_ttl)
             .await?;
 
-        // Try to fetch tenant display name; fall back gracefully if unsupported.
-        let tenant_json = match self
-            .executor
-            .execute(
-                &commands::account_tenant_list(),
-                Duration::from_secs(10),
-            )
-            .await
-        {
-            Ok(json) => Some(json),
-            Err(_) => None,
-        };
-
-        let result = parser::parse_account_list(&account_json, tenant_json.as_deref())?;
+        let result = parser::parse_account_list(&account_json)?;
 
         let key = CacheKey::global(CONTEXT_LIST_CACHE_KIND);
         let mut cache = self.cache.write().await;

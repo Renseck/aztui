@@ -17,14 +17,6 @@ struct RawAccount {
     tenant_id: String,
     home_tenant_id: Option<String>,
     state: String,
-}
-
-/* ============================================================================================== */
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawTenant {
-    tenant_id: String,
     #[serde(default)]
     tenant_display_name: String,
     #[serde(default)]
@@ -45,20 +37,9 @@ struct RawTenant {
 /// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
 pub fn parse_account_list(
     account_json: &str,
-    tenant_json: Option<&str>,
 ) -> Result<(Vec<Tenant>, HashMap<String, Vec<Subscription>>), AppError> {
     let raw_accounts: Vec<RawAccount> = serde_json::from_str(account_json)
         .map_err(|e| AppError::cli_parse_error(format!("account list: {}", e)))?;
-
-    // Build tenant lookup from tenant list if available.
-    let mut tenant_info: HashMap<String, (String, String)> = HashMap::new();
-    if let Some(tj) = tenant_json {
-        if let Ok(raw_tenants) = serde_json::from_str::<Vec<RawTenant>>(tj) {
-            for rt in raw_tenants {
-                tenant_info.insert(rt.tenant_id.clone(), (rt.tenant_display_name, rt.tenant_default_domain));
-            }
-        }
-    }
 
     let mut tenants_map: HashMap<String, Tenant> = HashMap::new();
     let mut subscriptions_by_tenant: HashMap<String, Vec<Subscription>> = HashMap::new();
@@ -68,17 +49,18 @@ pub fn parse_account_list(
 
         // Create or reuse tenant entry.
         if !tenants_map.contains_key(&tid) {
-            let (tenant_display_name, tenant_default_domain) =
-                tenant_info.get(&tid).cloned()
-                    .filter(|(dn, _)| !dn.is_empty())
-                    .unwrap_or_else(|| (tid.clone(), String::new()));
+            let display_name = if raw.tenant_display_name.is_empty() {
+                tid.clone()
+            } else {
+                raw.tenant_display_name.clone()
+            };
 
             tenants_map.insert(
                 tid.clone(),
                 Tenant {
                     id: tid.clone(),
-                    tenant_display_name,
-                    tenant_default_domain,
+                    tenant_display_name: display_name,
+                    tenant_default_domain: raw.tenant_default_domain.clone(),
                 },
             );
         }
@@ -120,9 +102,12 @@ pub fn parse_account_show(json: &str) -> Result<AzureContext, AppError> {
 
     let tenant = Tenant {
         id: raw.tenant_id.clone(),
-        // Display name is not available from account show; use GUID as fallback.
-        tenant_display_name: raw.tenant_id.clone(),
-        tenant_default_domain: String::new(),
+        tenant_display_name: if raw.tenant_display_name.is_empty() {
+            raw.tenant_id.clone()
+        } else {
+            raw.tenant_display_name
+        },
+        tenant_default_domain: raw.tenant_default_domain,
     };
 
     let subscription = Subscription {
@@ -166,7 +151,9 @@ mod tests {
             "managedByTenants": [],
             "name": "contoso-prod",
             "state": "Enabled",
-            "tenantId": "tenant-a-guid"
+            "tenantId": "tenant-a-guid",
+            "tenantDisplayName": "Contoso Ltd",
+            "tenantDefaultDomain": "contoso.onmicrosoft.com"
         },
         {
             "cloudName": "AzureCloud",
@@ -176,7 +163,9 @@ mod tests {
             "managedByTenants": [],
             "name": "contoso-dev",
             "state": "Disabled",
-            "tenantId": "tenant-a-guid"
+            "tenantId": "tenant-a-guid",
+            "tenantDisplayName": "Contoso Ltd",
+            "tenantDefaultDomain": "contoso.onmicrosoft.com"
         },
         {
             "cloudName": "AzureCloud",
@@ -186,27 +175,29 @@ mod tests {
             "managedByTenants": [],
             "name": "fabrikam-prod",
             "state": "Enabled",
-            "tenantId": "tenant-b-guid"
-        }
-    ]"#;
-
-    const TENANT_LIST_JSON: &str = r#"[
-        {
-            "tenantId": "tenant-a-guid",
-            "tenantDisplayName": "Contoso Ltd",
-            "tenantDefaultDomain": "contoso.onmicrosoft.com"
-        },
-        {
             "tenantId": "tenant-b-guid",
             "tenantDisplayName": "Fabrikam Inc",
             "tenantDefaultDomain": "fabrikam.onmicrosoft.com"
         }
     ]"#;
 
+    const ACCOUNT_LIST_NO_TENANT_NAMES_JSON: &str = r#"[
+        {
+            "cloudName": "AzureCloud",
+            "homeTenantId": "tenant-a-guid",
+            "id": "sub-1-guid",
+            "isDefault": true,
+            "managedByTenants": [],
+            "name": "contoso-prod",
+            "state": "Enabled",
+            "tenantId": "tenant-a-guid"
+        }
+    ]"#;
+
     #[test]
     fn parse_account_list_groups_by_tenant() {
         let (tenants, by_tenant) =
-            parse_account_list(ACCOUNT_LIST_JSON, Some(TENANT_LIST_JSON)).unwrap();
+            parse_account_list(ACCOUNT_LIST_JSON).unwrap();
 
         assert_eq!(tenants.len(), 2);
         assert_eq!(by_tenant["tenant-a-guid"].len(), 2);
@@ -216,7 +207,7 @@ mod tests {
     #[test]
     fn parse_account_list_resolves_tenant_names() {
         let (tenants, _) =
-            parse_account_list(ACCOUNT_LIST_JSON, Some(TENANT_LIST_JSON)).unwrap();
+            parse_account_list(ACCOUNT_LIST_JSON).unwrap();
 
         let contoso = tenants.iter().find(|t| t.id == "tenant-a-guid").unwrap();
         assert_eq!(contoso.tenant_display_name, "Contoso Ltd");
@@ -224,8 +215,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_account_list_falls_back_to_guid_without_tenant_list() {
-        let (tenants, _) = parse_account_list(ACCOUNT_LIST_JSON, None).unwrap();
+    fn parse_account_list_falls_back_to_guid_without_display_name() {
+        let (tenants, _) = parse_account_list(ACCOUNT_LIST_NO_TENANT_NAMES_JSON).unwrap();
         let t = tenants.iter().find(|t| t.id == "tenant-a-guid").unwrap();
         assert_eq!(t.tenant_display_name, "tenant-a-guid");
     }
