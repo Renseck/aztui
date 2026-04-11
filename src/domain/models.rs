@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize}
+use serde::{Deserialize, Serialize};
 
 /// A normalized Azure tenant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
