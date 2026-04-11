@@ -61,6 +61,12 @@ pub enum Command {
     Lock,
     Unlock(String),
 
+    // Set up a new master password (first time).
+    SetupPassword(String),
+
+    // Reset the master password (via --reset-password).
+    ResetPassword,
+
     /* ========================================= System ========================================= */
 
     Quit,
@@ -80,4 +86,12 @@ pub enum Command {
     /// Delivered on startup when the active context is resolved.
     #[doc(hidden)]
     ActiveContextResult(Result<Option<AzureContext>, AppError>),
+
+    /// Delivered after Argon2id password verification completes.
+    #[doc(hidden)]
+    UnlockResult(Result<crate::security::DerivedKey, AppError>),
+
+    /// Delivered after Argon2id password setup completes.
+    #[doc(hidden)]
+    SetupPasswordResult(Result<(crate::security::StoredKeyParams, crate::security::DerivedKey), AppError>),
 }
