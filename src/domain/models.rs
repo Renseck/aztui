@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 /// A normalized Azure tenant.
@@ -113,6 +114,98 @@ pub enum CostScope {
 pub struct CostPeriod {
     pub from: String,
     pub to: String,
+}
+
+impl CostPeriod {
+    /// Returns a period for the current month (1st to today).
+    pub fn current_month() -> Self {
+        let today = chrono::Local::now().date_naive();
+        let first = today.with_day(1).unwrap_or(today);
+        Self {
+            from: first.format("%Y-%m-%d").to_string(),
+            to: today.format("%Y-%m-%d").to_string(),
+        }
+    }
+
+    /* ========================================================================================== */
+    /// Returns the previous month's period relative to this one.
+    pub fn previous_month(&self) -> Self {
+        if let Ok(from_date) = chrono::NaiveDate::parse_from_str(&self.from, "%Y-%m-%d") {
+            let prev = if from_date.month() == 1 {
+                chrono::NaiveDate::from_ymd_opt(from_date.year() - 1, 12, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(from_date.year(), from_date.month() - 1, 1)
+            };
+            if let Some(prev_first) = prev {
+                let prev_last = if prev_first.month() == 12 {
+                    chrono::NaiveDate::from_ymd_opt(prev_first.year() + 1, 1, 1)
+                } else {
+                    chrono::NaiveDate::from_ymd_opt(prev_first.year(), prev_first.month() + 1, 1)
+                }
+                .map(|d| d.pred_opt().unwrap_or(d))
+                .unwrap_or(prev_first);
+
+                return Self {
+                    from: prev_first.format("%Y-%m-%d").to_string(),
+                    to: prev_last.format("%Y-%m-%d").to_string(),
+                };
+            }
+        }
+        self.clone()
+    }
+
+    /* ========================================================================================== */
+    /// Returns the next month's period, or `None` if already at the current month.
+    pub fn next_month(&self) -> Option<Self> {
+        let today = chrono::Local::now().date_naive();
+        let current_month_first = today.with_day(1).unwrap_or(today);
+
+        if let Ok(from_date) = chrono::NaiveDate::parse_from_str(&self.from, "%Y-%m-%d") {
+            if from_date >= current_month_first {
+                return None; // Already at current month.
+            }
+
+            let next = if from_date.month() == 12 {
+                chrono::NaiveDate::from_ymd_opt(from_date.year() + 1, 1, 1)
+            } else {
+                chrono::NaiveDate::from_ymd_opt(from_date.year(), from_date.month() + 1, 1)
+            };
+
+            if let Some(next_first) = next {
+                // If next month is the current month, cap at today.
+                if next_first.year() == today.year() && next_first.month() == today.month() {
+                    return Some(Self {
+                        from: next_first.format("%Y-%m-%d").to_string(),
+                        to: today.format("%Y-%m-%d").to_string(),
+                    });
+                }
+
+                let next_last = if next_first.month() == 12 {
+                    chrono::NaiveDate::from_ymd_opt(next_first.year() + 1, 1, 1)
+                } else {
+                    chrono::NaiveDate::from_ymd_opt(next_first.year(), next_first.month() + 1, 1)
+                }
+                .map(|d| d.pred_opt().unwrap_or(d))
+                .unwrap_or(next_first);
+
+                return Some(Self {
+                    from: next_first.format("%Y-%m-%d").to_string(),
+                    to: next_last.format("%Y-%m-%d").to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /* ========================================================================================== */
+    /// Returns a display label like "Mar 2026".
+    pub fn label(&self) -> String {
+        if let Ok(from_date) = chrono::NaiveDate::parse_from_str(&self.from, "%Y-%m-%d") {
+            from_date.format("%b %Y").to_string()
+        } else {
+            format!("{} → {}", self.from, self.to)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
