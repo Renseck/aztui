@@ -891,6 +891,11 @@ Step 45 (cache keys) ──────→ Step 46 (provider)
 
 ---
 
+<!-- =========================================================================================== -->
+<!--                                        PHASE 4 DONE                                         -->
+<!-- =========================================================================================== -->
+
+
 # Phase 4 — Cost Explorer (FinOps)
 
 **TL;DR**: Add a cost summary view showing per-service cost breakdown for the active subscription, with period navigation and inline bar charts. Uses `az consumption usage list` or `az costmanagement` commands.
@@ -1100,7 +1105,10 @@ Step 56 (cache keys) ─────────→ Step 57 (provider)
 - **Period defaults to current month**: On first navigation to cost explorer, show current month-to-date costs.
 - **New AppState fields**: `cost_summary`, `cost_period`, `cost_selected_index` added to `AppState`.
 
----
+<!-- =========================================================================================== -->
+<!--                                        PHASE 4 DONE                                         -->
+<!-- =========================================================================================== -->
+
 ---
 
 # Cross-Phase Summary
