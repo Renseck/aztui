@@ -45,6 +45,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         .filter(|i| matches!(i, ContextItem::SubscriptionRow { .. }))
         .count();
 
+    // Compute max subscription name length for tabular alignment.
+    let max_name_len = items.iter().filter_map(|item| match item {
+        ContextItem::SubscriptionRow { subscription, .. } => Some(subscription.name.len()),
+        _ => None,
+    }).max().unwrap_or(0);
+
     // Map subscription cursor to flat list index
     let flat_cursor = sub_index_to_flat(&items, state.context_list_cursor.min(total_subs.saturating_sub(1)));
 
@@ -66,7 +72,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     let list_items: Vec<ListItem> = items
         .iter()
         .enumerate()
-        .map(|(idx, item)| render_item(item, idx, flat_cursor, state, theme))
+        .map(|(idx, item)| render_item(item, idx, flat_cursor, state, theme, max_name_len))
         .collect();
 
     let mut list_state = ListState::default();
@@ -227,6 +233,7 @@ fn render_item<'a>(
     cursor_flat: usize,
     state: &AppState,
     theme: &Theme,
+    max_name_len: usize,
 ) -> ListItem<'a> {
     match item {
         ContextItem::TenantHeader(tenant) => {
@@ -253,13 +260,17 @@ fn render_item<'a>(
             let prefix = if is_selected { "    [» " } else { "       " };
             let suffix = if is_selected && is_enabled { " ]" } else { "  " };
 
-            let state_label = format!("  {}", sub.state);
+            // Pad name + suffix to align the status column.
+            // Prefix (7) + name + suffix (2) + padding -> consistent width
+            let name_with_suffix = format!("{}{}{}", prefix, sub.name, suffix);
+            let padded_width = 7 + max_name_len + 2 + 2; // prefix + max name + suffix + gap
+            let name_padded = format!("{:<width$}", name_with_suffix, width = padded_width);
 
-            let active_marker = if is_active { " ● active" } else { "" };
+            let active_marker = if is_active { "  ( ● active )" } else { "" };
 
             let name_span = if is_enabled {
                 Span::styled(
-                    format!("{}{}{}", prefix, sub.name, suffix),
+                    name_padded,
                     if is_active {
                         theme.active_context_style()
                     } else if is_selected {
@@ -269,11 +280,10 @@ fn render_item<'a>(
                     },
                 )
             } else {
-                Span::styled(
-                    format!("{}{}{}", prefix, sub.name, suffix),
-                    theme.dimmed_style(),
-                )
+                Span::styled(name_padded, theme.dimmed_style())
             };
+
+            let state_label = format!("{}", sub.state);
 
             let state_span = Span::styled(
                 format!("{}{}", active_marker, state_label),
