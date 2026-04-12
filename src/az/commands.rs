@@ -78,3 +78,62 @@ pub fn resource_list(subscription_id: &str, resource_group: &str) -> Vec<String>
         "json".to_string(),
     ]
 }
+
+/* ============================================================================================== */
+/*                                              Cost                                              */
+/* ============================================================================================== */
+
+/// Returns args for `az costmanagement query` aggregated by service name.
+///
+/// Uses `--type ActualCost` with custom time period and groups by `ServiceName`.
+pub fn cost_query_by_service(subscription_id: &str, from: &str, to: &str) -> Vec<String> {
+    vec![
+        "costmanagement".to_string(),
+        "query".to_string(),
+        "--type".to_string(),
+        "ActualCost".to_string(),
+        "--timeframe".to_string(),
+        "Custom".to_string(),
+        "--time-period".to_string(),
+        format!("from={}T00:00:00Z to={}T23:59:59Z", from, to),
+        "--dataset-aggregation".to_string(),
+        r#"{"totalCost":{"name":"Cost","function":"Sum"}}"#.to_string(),
+        "--dataset-grouping".to_string(),
+        "name=ServiceName type=Dimension".to_string(),
+        "--scope".to_string(),
+        format!("/subscriptions/{}", subscription_id),
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/* ============================================================================================== */
+/// Returns args for `az costmanagement query` scoped to a resource group.
+pub fn cost_query_by_resource_group(
+    subscription_id: &str,
+    resource_group: &str,
+    from: &str,
+    to: &str,
+) -> Vec<String> {
+    vec![
+        "costmanagement".to_string(),
+        "query".to_string(),
+        "--type".to_string(),
+        "ActualCost".to_string(),
+        "--timeframe".to_string(),
+        "Custom".to_string(),
+        "--time-period".to_string(),
+        format!("from={}T00:00:00Z to={}T23:59:59Z", from, to),
+        "--dataset-aggregation".to_string(),
+        r#"{"totalCost":{"name":"Cost","function":"Sum"}}"#.to_string(),
+        "--dataset-grouping".to_string(),
+        "name=ServiceName type=Dimension".to_string(),
+        "--scope".to_string(),
+        format!(
+            "/subscriptions/{}/resourceGroups/{}",
+            subscription_id, resource_group
+        ),
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}

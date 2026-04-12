@@ -676,6 +676,10 @@ Step 34 (AES-GCM) ───┘                         │
 
 ---
 
+<!-- =========================================================================================== -->
+<!--                                        PHASE 3 DONE                                         -->
+<!-- =========================================================================================== -->
+
 # Phase 3 — Resource Browser
 
 **TL;DR**: Add a two-pane resource browsing view. Left pane shows resource groups for the active subscription; right pane shows resources within the selected group. Drill-down navigation with search filtering per pane.
@@ -881,7 +885,10 @@ Step 45 (cache keys) ──────→ Step 46 (provider)
 - **Auto-load on navigation**: Navigating to the resource browser auto-fetches resource groups if not cached. Selecting a resource group auto-fetches its resources.
 - **New AppState fields**: `resource_groups`, `resources`, `selected_resource_group_index`, `selected_resource_index`, `resource_browser_focus` added to `AppState`.
 
----
+<!-- =========================================================================================== -->
+<!--                                        PHASE 3 DONE                                         -->
+<!-- =========================================================================================== -->
+
 ---
 
 # Phase 4 — Cost Explorer (FinOps)
