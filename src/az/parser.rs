@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::domain::{Resource, ResourceGroup};
+use crate::domain::{CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup};
 use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
@@ -38,7 +38,6 @@ struct RawResource {
     tags: Option<HashMap<String, String>>,
 }
 
-/* ============================================================================================== */
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawResourceGroup {
@@ -46,6 +45,22 @@ struct RawResourceGroup {
     location: String,
     #[serde(default)]
     tags: Option<HashMap<String, String>>,
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+struct RawCostQueryResponse {
+    #[serde(default)]
+    rows: Vec<Vec<serde_json::Value>>,
+    #[serde(default)]
+    columns: Vec<RawCostColumn>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCostColumn {
+    name: String,
+    #[serde(rename = "type")]
+    column_type: String,
 }
 
 /* ============================================================================================== */
@@ -201,6 +216,66 @@ pub fn parse_resource_list(json: &str) -> Result<Vec<Resource>, AppError> {
     Ok(resources)
 }
 
+/* ============================================ Cost ============================================ */
+/// Parses the output of `az costmanagement query` into a [`CostSummary`].
+///
+/// The response contains `rows` with `[cost, service_name, currency]` tuples.
+/// The `scope` and `period` are injected by the caller since they are not
+/// present in the response body.
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_cost_query(
+    json: &str,
+    scope: CostScope,
+    period: CostPeriod,
+) -> Result<CostSummary, AppError> {
+    let raw: RawCostQueryResponse = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("cost query: {}", e)))?;
+
+    let mut currency = String::from("USD");
+    let mut breakdown: Vec<CostLineItem> = Vec::new();
+    let mut total = 0.0;
+
+    for row in &raw.rows {
+        // Each row is an array: [cost, service_name, currency].
+        if row.len() < 3 {
+            continue;
+        }
+
+        let amount = match &row[0] {
+            serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+            _ => 0.0,
+        };
+
+        let service_name = match &row[1] {
+            serde_json::Value::String(s) => s.clone(),
+            _ => "Unknown".to_string(),
+        };
+
+        if let serde_json::Value::String(c) = &row[2] {
+            currency = c.clone();
+        }
+
+        total += amount;
+        breakdown.push(CostLineItem {
+            service_name,
+            amount,
+        });
+    }
+
+    // Sort by amount descending.
+    breakdown.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(CostSummary {
+        scope,
+        currency,
+        total,
+        period,
+        breakdown,
+    })
+}
+
 /* ============================================================================================== */
 /*                                         Private helpers                                        */
 /* ============================================================================================== */
@@ -315,6 +390,21 @@ mod tests {
         }
     ]"#;
 
+    const COST_QUERY_JSON: &str = r#"{
+        "columns": [
+            {"name": "Cost", "type": "Number"},
+            {"name": "ServiceName", "type": "String"},
+            {"name": "Currency", "type": "String"}
+        ],
+        "rows": [
+            [612.40, "Virtual Machines", "EUR"],
+            [284.15, "Azure SQL Database", "EUR"],
+            [156.22, "Storage Accounts", "EUR"],
+            [98.50, "Azure Kubernetes Service", "EUR"],
+            [42.30, "Key Vault", "EUR"]
+        ]
+    }"#;
+
     #[test]
     fn parse_account_list_groups_by_tenant() {
         let (tenants, by_tenant) =
@@ -375,5 +465,45 @@ mod tests {
         assert_eq!(resources[1].name, "vm-1");
         assert_eq!(resources[1].resource_type, "Microsoft.Compute/virtualMachines");
         assert!(resources[0].tags.is_empty()); // null tags → empty map
+    }
+
+    #[test]
+    fn parse_cost_query_basic() {
+        let period = CostPeriod {
+            from: "2026-03-01".to_string(),
+            to: "2026-03-31".to_string(),
+        };
+        let summary = parse_cost_query(
+            COST_QUERY_JSON,
+            CostScope::Subscription("sub-1".to_string()),
+            period,
+        )
+        .unwrap();
+
+        assert_eq!(summary.breakdown.len(), 5);
+        assert_eq!(summary.currency, "EUR");
+        // Total should be sum of all rows.
+        assert!((summary.total - 1193.57).abs() < 0.01);
+        // Sorted by amount descending.
+        assert_eq!(summary.breakdown[0].service_name, "Virtual Machines");
+        assert_eq!(summary.breakdown[4].service_name, "Key Vault");
+    }
+
+    #[test]
+    fn parse_cost_query_empty() {
+        let json = r#"{"columns": [], "rows": []}"#;
+        let period = CostPeriod {
+            from: "2026-03-01".to_string(),
+            to: "2026-03-31".to_string(),
+        };
+        let summary = parse_cost_query(
+            json,
+            CostScope::Subscription("sub-1".to_string()),
+            period,
+        )
+        .unwrap();
+
+        assert_eq!(summary.total, 0.0);
+        assert!(summary.breakdown.is_empty());
     }
 }
