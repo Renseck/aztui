@@ -286,7 +286,7 @@ fn render_item<'a>(
             let state_label = format!("{}", sub.state);
 
             let state_span = Span::styled(
-                format!("{}{}", active_marker, state_label),
+                format!("{}", state_label),
                 if is_active {
                     theme.active_context_style()
                 } else if is_enabled {
@@ -296,7 +296,12 @@ fn render_item<'a>(
                 },
             );
 
-            ListItem::new(Line::from(vec![name_span, state_span]))
+            let active_span = Span::styled(
+                active_marker.to_string(),
+                theme.active_context_style(),
+            );
+
+            ListItem::new(Line::from(vec![name_span, state_span, active_span]))
         }
     }
 }
