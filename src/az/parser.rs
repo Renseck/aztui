@@ -14,9 +14,17 @@ use crate::errors::AppError;
 struct RawAccount {
     id: String,
     name: String,
-    tenant_id: String,
     home_tenant_id: Option<String>,
     state: String,
+    #[serde(flatten)]
+    tenant: RawTenant,
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawTenant {
+    tenant_id: String,
     #[serde(default)]
     tenant_display_name: String,
     #[serde(default)]
