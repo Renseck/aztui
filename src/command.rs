@@ -52,7 +52,10 @@ pub enum Command {
 
     /* =================================== Resource (Phase 3) =================================== */
 
+    /// Fetch resource groups for the active subscription.
     ListResourceGroups,
+
+    /// Fetch resources within a specific resource group.
     ListResources(String),
 
     /* ===================================== Cost (Phase 4) ===================================== */
@@ -97,4 +100,15 @@ pub enum Command {
     /// Delivered after Argon2id password setup completes.
     #[doc(hidden)]
     SetupPasswordResult(Result<(crate::security::StoredKeyParams, crate::security::DerivedKey), AppError>),
+
+    /// Delivered by async tasks when resource groups fetch completes.
+    #[doc(hidden)]
+    ResourceGroupsResult(Result<Vec<crate::domain::models::ResourceGroup>, AppError>),
+
+    /// Delivered by async tasks when resources fetch completes.
+    #[doc(hidden)]
+    ResourcesResult {
+        resource_group: String,
+        result: Result<Vec<crate::domain::models::Resource>, AppError>,
+    },
 }

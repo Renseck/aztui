@@ -80,6 +80,14 @@ async fn main() -> Result<(), AppError> {
         config.cache.clone(),
     ));
 
+    let resources: Arc<dyn aztui::domain::ResourceProvider> = Arc::new(
+        aztui::providers::AzResourceProvider::new(
+            Arc::clone(&executor),
+            Arc::clone(&cache),
+            config.cache.clone(),
+        ),
+    );
+
     let mut state = AppState::new(config.clone(), security);
 
     // Populate state from disk cache if available.
@@ -133,6 +141,7 @@ async fn main() -> Result<(), AppError> {
         &cmd_tx,
         &event_tx,
         Arc::clone(&auth),
+        Arc::clone(&resources),
         &theme,
         tick_duration,
     )
@@ -165,6 +174,7 @@ async fn run_loop(
     cmd_tx: &mpsc::Sender<Command>,
     event_tx: &mpsc::Sender<Event>,
     auth: Arc<dyn aztui::domain::AuthProvider>,
+    resources: Arc<dyn aztui::domain::ResourceProvider>,
     theme: &Theme,
     tick: Duration,
 ) -> Result<(), AppError> {
@@ -197,7 +207,13 @@ async fn run_loop(
 
         // 3. Process pending commands
         while let Ok(cmd) = cmd_rx.try_recv() {
-            let emitted = dispatch_command(state, cmd, cmd_tx, Arc::clone(&auth)).await;
+            let emitted = dispatch_command(
+                state, 
+                cmd, 
+                cmd_tx, 
+                Arc::clone(&auth),
+            Arc::clone(&resources))
+            .await;
             for ev in emitted {
                 let _ = event_tx.send(ev).await;
             }

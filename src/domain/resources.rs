@@ -21,5 +21,6 @@ pub trait ResourceProvider: Send + Sync {
     async fn list_resources(
         &self,
         subscription_id: &str,
+        resource_group: &str,
     ) -> Result<Vec<Resource>, AppError>;
 }

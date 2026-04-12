@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Pending;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -8,11 +7,12 @@ use tokio::sync::{mpsc, RwLock};
 use crate::cache::CacheStore;
 use crate::command::Command;
 use crate::config::AppConfig;
-use crate::domain::auth::{self, AuthProvider};
-use crate::domain::models::{AzureContext, Subscription, Tenant};
-use crate::errors::AppError;
+use crate::domain::auth::{AuthProvider};
+use crate::domain::models::{AzureContext, Resource, ResourceGroup, Subscription, Tenant};
+use crate::domain::resources::ResourceProvider;
+use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
-use crate::security::{self, SecurityManager};
+use crate::security::{SecurityManager};
 
 /* ============================================================================================== */
 /*                                        Supporting types                                        */
@@ -66,6 +66,14 @@ pub enum PasswordMode {
 }
 
 /* ============================================================================================== */
+/// Which pane of the resource browser has focus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pane {
+    Left,
+    Right
+}
+
+/* ============================================================================================== */
 
 /// An in-flight async operation. The [`AbortHandle`] allows cancellation.
 #[derive(Debug, Clone)]
@@ -96,6 +104,14 @@ pub struct AppState {
     pub search_focused: bool,
     pub modal: Option<Modal>,
     pub context_list_cursor: usize,
+
+    // Resource browser (Phase 3)
+    pub resource_groups: Vec<ResourceGroup>,
+    pub resources: Vec<Resource>,
+    pub resource_group_cursor: usize,
+    pub resource_cursor: usize,
+    pub resource_browser_focus: Pane,
+    pub resource_search_query: String,
     
     // Async operations
     pub pending_operations: HashMap<OperationId, PendingOperation>,
@@ -134,6 +150,12 @@ impl AppState {
             search_focused: false,
             modal: None,
             context_list_cursor: 0,
+            resource_groups: Vec::new(),
+            resources: Vec::new(),
+            resource_group_cursor: 0,
+            resource_cursor: 0,
+            resource_browser_focus: Pane::Left,
+            resource_search_query: String::new(),
             pending_operations: HashMap::new(),
             next_operation_id: 0,
             locked,
@@ -187,6 +209,8 @@ impl AppState {
 
 const SLOT_CONTEXT_LIST: OperationId = u64::MAX - 1;
 const SLOT_CONTEXT_SWITCH: OperationId = u64::MAX - 2;
+const SLOT_RESOURCE_GROUPS: OperationId = u64::MAX - 3;
+const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -195,6 +219,7 @@ pub async fn dispatch_command(
     cmd: Command,
     cmd_tx: &mpsc::Sender<Command>,
     auth: Arc<dyn AuthProvider>,
+    resources: Arc<dyn ResourceProvider>,
 ) -> Vec<Event> {
     state.last_interaction = Instant::now();
     let mut events = Vec::new();
@@ -206,10 +231,20 @@ pub async fn dispatch_command(
         }
 
         Command::NavigateTo(view) => {
+            let prev_view = state.active_view.clone();
             state.active_view = view.clone();
             state.search_query.clear();
             state.search_focused = false;
-            events.push(Event::ViewChanged(view));
+            state.resource_search_query.clear();
+            events.push(Event::ViewChanged(view.clone()));
+
+            // Auto-fetch resource groups when entering resource browser.
+            if view == View::ResourceBrowser
+                && state.resource_groups.is_empty()
+                && state.active_context.is_some()
+            {
+                let _ = cmd_tx.try_send(Command::ListResourceGroups);
+            }
         }
 
         Command::UpdateSearch(q) => {
@@ -561,6 +596,11 @@ pub async fn dispatch_command(
                     state.last_error = None;
                     state.push_recent_context(ctx.clone());
                     state.active_context = Some(ctx.clone());
+                    // Clear stale resource data from previous subscription.
+                    state.resource_groups.clear();
+                    state.resources.clear();
+                    state.resource_group_cursor = 0;
+                    state.resource_cursor = 0;
                     // Close quick switch modal if open.
                     if matches!(state.modal, Some(Modal::QuickSwitch { .. })) {
                         state.modal = None;
@@ -589,12 +629,123 @@ pub async fn dispatch_command(
             }
         }
 
-        /* =============================== Phase 3/4 placeholders =============================== */
+        /* ================================= Resource (Phase 3) ================================= */
 
-        Command::ListResourceGroups
-        | Command::ListResources(_)
-        | Command::FetchCostSummary(_) => {
-            // TODO Phase 3/4.
+         Command::ListResourceGroups => {
+            let sub_id = match &state.active_context {
+                Some(ctx) => ctx.subscription.id.clone(),
+                None => {
+                    state.last_error = Some(AppError::new(
+                        ErrorKind::SubscriptionNotFound,
+                        "Select a subscription before browsing resources",
+                    ));
+                    events.push(Event::ErrorOccurred(state.last_error.clone().unwrap()));
+                    return events;
+                }
+            };
+
+            abort_slot(state, SLOT_RESOURCE_GROUPS);
+
+            let op_id = SLOT_RESOURCE_GROUPS;
+            let tx = cmd_tx.clone();
+            let resources = Arc::clone(&resources);
+
+            let handle = tokio::spawn(async move {
+                let result = resources.list_resource_groups(&sub_id).await;
+                let _ = tx.send(Command::ResourceGroupsResult(result)).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: "Loading resource groups...".to_string(),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::ListResources(ref rg_name) => {
+            let sub_id = match &state.active_context {
+                Some(ctx) => ctx.subscription.id.clone(),
+                None => return events,
+            };
+
+            abort_slot(state, SLOT_RESOURCES);
+
+            let op_id = SLOT_RESOURCES;
+            let tx = cmd_tx.clone();
+            let resources_provider = Arc::clone(&resources);
+            let rg = rg_name.clone();
+
+            let handle = tokio::spawn(async move {
+                let result = resources_provider.list_resources(&sub_id, &rg).await;
+                let _ = tx.send(Command::ResourcesResult {
+                    resource_group: rg,
+                    result,
+                }).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: format!("Loading resources for {}...", rg_name),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::ResourceGroupsResult(result) => {
+            state.pending_operations.remove(&SLOT_RESOURCE_GROUPS);
+            events.push(Event::OperationCompleted(SLOT_RESOURCE_GROUPS));
+
+            match result {
+                Ok(groups) => {
+                    state.resource_groups = groups.clone();
+                    state.resource_group_cursor = 0;
+                    state.resources.clear();
+                    state.resource_cursor = 0;
+                    events.push(Event::ResourceGroupsLoaded(groups));
+
+                    // Auto-load resources for the first group.
+                    if let Some(first) = state.resource_groups.first() {
+                        let _ = cmd_tx.try_send(Command::ListResources(first.name.clone()));
+                    }
+                }
+                Err(e) => {
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
+        }
+
+        Command::ResourcesResult { resource_group, result } => {
+            state.pending_operations.remove(&SLOT_RESOURCES);
+            events.push(Event::OperationCompleted(SLOT_RESOURCES));
+
+            match result {
+                Ok(resources) => {
+                    state.resources = resources.clone();
+                    state.resource_cursor = 0;
+                    events.push(Event::ResourcesLoaded {
+                        resource_group,
+                        resources,
+                    });
+                }
+                Err(e) => {
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
+        }
+        
+        /* ================================ Phase 4 placeholders ================================ */
+        
+        Command::FetchCostSummary(_) => {
+            // TODO Phase 4.
         }
     }
 
@@ -606,6 +757,10 @@ pub async fn dispatch_command(
 pub fn handle_event(state: &mut AppState, event: &Event) {
     match event {
         Event::LoginCompleted { .. } => {
+            state.last_error = None;
+        }
+        Event::ContextChanged(_) => {
+            // Resource data is cleared in dispatch; nothing extra needed here.
             state.last_error = None;
         }
         Event::ErrorOccurred(e) => {
