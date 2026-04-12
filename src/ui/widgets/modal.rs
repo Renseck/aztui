@@ -41,7 +41,7 @@ pub fn render_modal_frame(
     let (x, y) = match position {
         ModalPosition::Center => (
             area.x + (area.width.saturating_sub(modal_width)) / 2,
-            area.y + (area.width.saturating_sub(modal_height)) / 2,
+            area.y + (area.height.saturating_sub(modal_height)) / 2,
         ),
         ModalPosition::TopLeft => (
             area.x + 1,
@@ -53,11 +53,11 @@ pub fn render_modal_frame(
         ),
         ModalPosition::BottomLeft => (
             area.x + 1,
-            area.y + (area.width.saturating_sub(modal_height + 1)),
+            area.y + (area.height.saturating_sub(modal_height + 1)),
         ),
         ModalPosition::BottomRight => (
             area.x + area.width.saturating_sub(modal_width + 1),
-            area.y + (area.width.saturating_sub(modal_height + 1)),
+            area.y + (area.height.saturating_sub(modal_height + 1)),
         ),
         ModalPosition::At { x, y } => (x, y),
     };
