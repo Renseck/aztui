@@ -19,7 +19,7 @@ use aztui::command::Command;
 use aztui::config::AppConfig;
 use aztui::errors::AppError;
 use aztui::event::Event;
-use aztui::providers::AzAuthProvider;
+use aztui::providers::{AzAuthProvider, AzCostProvider};
 use aztui::security::SecurityManager;
 use aztui::ui::{handle_input, render, Theme};
 
@@ -88,6 +88,14 @@ async fn main() -> Result<(), AppError> {
         ),
     );
 
+    let cost: Arc<dyn aztui::domain::CostProvider> = Arc::new(
+        AzCostProvider::new(
+            Arc::clone(&executor),
+            Arc::clone(&cache),
+            config.cache.clone(),
+        ),
+    );
+
     let mut state = AppState::new(config.clone(), security);
 
     // Populate state from disk cache if available.
@@ -142,6 +150,7 @@ async fn main() -> Result<(), AppError> {
         &event_tx,
         Arc::clone(&auth),
         Arc::clone(&resources),
+        Arc::clone(&cost),
         &theme,
         tick_duration,
     )
@@ -175,6 +184,7 @@ async fn run_loop(
     event_tx: &mpsc::Sender<Event>,
     auth: Arc<dyn aztui::domain::AuthProvider>,
     resources: Arc<dyn aztui::domain::ResourceProvider>,
+    cost: Arc<dyn aztui::domain::CostProvider>,
     theme: &Theme,
     tick: Duration,
 ) -> Result<(), AppError> {
@@ -212,7 +222,9 @@ async fn run_loop(
                 cmd, 
                 cmd_tx, 
                 Arc::clone(&auth),
-            Arc::clone(&resources))
+            Arc::clone(&resources),
+        Arc::clone(&cost),
+            )
             .await;
             for ev in emitted {
                 let _ = event_tx.send(ev).await;

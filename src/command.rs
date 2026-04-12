@@ -117,4 +117,8 @@ pub enum Command {
         resource_group: String,
         result: Result<Vec<crate::domain::models::Resource>, AppError>,
     },
+
+    /// Delivered by async tasks when cost summary fetch completes.
+    #[doc(hidden)]
+    CostSummaryResult(Result<crate::domain::models::CostSummary, AppError>),
 }

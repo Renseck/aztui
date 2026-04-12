@@ -102,7 +102,9 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
         View::ResourceBrowser => {
             crate::ui::widgets::resource_browser::render(frame, area, state, theme);
         }
-        View::CostExplorer => render_phase_stub(frame, area, "Cost Explorer", "Phase 4", theme),
+        View::CostExplorer => {
+            crate::ui::widgets::cost_explorer::render(frame, area, state, theme);
+        }
         View::Help => render_help(frame, area, theme),
     }
 }
@@ -171,6 +173,10 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
             Span::styled("Refresh current view", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
+            Span::styled("  [ / ]  or  h/l  ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Period navigation (cost explorer)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
             Span::styled("  1               ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Context switcher", theme.surface_style().fg(theme.text)),
         ]),
@@ -180,7 +186,7 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         ]),
         Line::from(vec![
             Span::styled("  3               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Cost explorer     (Phase 4)", theme.surface_style().fg(theme.subtle)),
+            Span::styled("Cost explorer", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled("  System", theme.heading_style())]),

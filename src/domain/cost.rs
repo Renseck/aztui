@@ -11,7 +11,7 @@ use crate::errors::AppError;
 
 /// Provides cost and usage data. (Phase 4)
 #[async_trait]
-pub trait CostProvider {
+pub trait CostProvider: Send + Sync {
     async fn get_cost_summary(
         &self,
         subscription_id: &str,

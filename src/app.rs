@@ -8,7 +8,8 @@ use crate::cache::CacheStore;
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::auth::{AuthProvider};
-use crate::domain::models::{AzureContext, Resource, ResourceGroup, Subscription, Tenant};
+use crate::domain::cost::CostProvider;
+use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant};
 use crate::domain::resources::ResourceProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
@@ -112,6 +113,11 @@ pub struct AppState {
     pub resource_cursor: usize,
     pub resource_browser_focus: Pane,
     pub resource_search_query: String,
+
+    // Cost explorer (Phase 4)
+    pub cost_summary: Option<CostSummary>,
+    pub cost_period: CostPeriod,
+    pub cost_selected_index: usize,
     
     // Async operations
     pub pending_operations: HashMap<OperationId, PendingOperation>,
@@ -156,6 +162,9 @@ impl AppState {
             resource_cursor: 0,
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
+            cost_summary: None,
+            cost_period: CostPeriod::current_month(),
+            cost_selected_index: 0,
             pending_operations: HashMap::new(),
             next_operation_id: 0,
             locked,
@@ -211,6 +220,7 @@ const SLOT_CONTEXT_LIST: OperationId = u64::MAX - 1;
 const SLOT_CONTEXT_SWITCH: OperationId = u64::MAX - 2;
 const SLOT_RESOURCE_GROUPS: OperationId = u64::MAX - 3;
 const SLOT_RESOURCES: OperationId = u64::MAX - 4;
+const SLOT_COST: OperationId = u64::MAX - 5;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -220,6 +230,7 @@ pub async fn dispatch_command(
     cmd_tx: &mpsc::Sender<Command>,
     auth: Arc<dyn AuthProvider>,
     resources: Arc<dyn ResourceProvider>,
+    cost: Arc<dyn CostProvider>,
 ) -> Vec<Event> {
     state.last_interaction = Instant::now();
     let mut events = Vec::new();
@@ -244,6 +255,14 @@ pub async fn dispatch_command(
                 && state.active_context.is_some()
             {
                 let _ = cmd_tx.try_send(Command::ListResourceGroups);
+            }
+
+            // Auto-fetch cost data when entering cost explorer.
+            if view == View::CostExplorer
+                && state.cost_summary.is_none()
+                && state.active_context.is_some()
+            {
+                let _ = cmd_tx.try_send(Command::FetchCostSummary(state.cost_period.clone()));
             }
         }
 
@@ -301,6 +320,10 @@ pub async fn dispatch_command(
                         }
                     }
                 }
+            } else if state.active_view == View::CostExplorer {
+                if state.cost_selected_index > 0 {
+                    state.cost_selected_index -= 1;
+                }
             } else if state.context_list_cursor > 0 {
                 state.context_list_cursor -= 1;
             }
@@ -337,6 +360,12 @@ pub async fn dispatch_command(
                             state.resource_cursor += 1;
                         }
                     }
+                }
+            } else if state.active_view == View::CostExplorer {
+                let max = crate::ui::widgets::cost_explorer::total_selectable(state)
+                    .saturating_sub(1);
+                if state.cost_selected_index < max {
+                    state.cost_selected_index += 1;
                 }
             } else {
                 state.context_list_cursor += 1;
@@ -653,6 +682,9 @@ pub async fn dispatch_command(
                     state.resources.clear();
                     state.resource_group_cursor = 0;
                     state.resource_cursor = 0;
+                    // Clear stale cost data from previous subscription.
+                    state.cost_summary = None;
+                    state.cost_selected_index = 0;
                     // Close quick switch modal if open.
                     if matches!(state.modal, Some(Modal::QuickSwitch { .. })) {
                         state.modal = None;
@@ -796,8 +828,57 @@ pub async fn dispatch_command(
         
         /* ================================ Phase 4 placeholders ================================ */
         
-        Command::FetchCostSummary(_) => {
-            // TODO Phase 4.
+        Command::FetchCostSummary(period) => {
+            let sub_id = match &state.active_context {
+                Some(ctx) => ctx.subscription.id.clone(),
+                None => {
+                    state.last_error = Some(AppError::new(
+                        ErrorKind::SubscriptionNotFound,
+                        "Select a subscription before viewing costs",
+                    ));
+                    events.push(Event::ErrorOccurred(state.last_error.clone().unwrap()));
+                    return events;
+                }
+            };
+
+            state.cost_period = period.clone();
+            abort_slot(state, SLOT_COST);
+
+            let op_id = SLOT_COST;
+            let tx = cmd_tx.clone();
+            let cost = Arc::clone(&cost);
+
+            let handle = tokio::spawn(async move {
+                let result = cost.get_cost_summary(&sub_id, &period).await;
+                let _ = tx.send(Command::CostSummaryResult(result)).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: "Loading cost data...".to_string(),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::CostSummaryResult(result) => {
+            state.pending_operations.remove(&SLOT_COST);
+            events.push(Event::OperationCompleted(SLOT_COST));
+
+            match result {
+                Ok(summary) => {
+                    state.cost_summary = Some(summary.clone());
+                    state.cost_selected_index = 0;
+                    events.push(Event::CostSummaryLoaded(summary));
+                }
+                Err(e) => {
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
         }
     }
 

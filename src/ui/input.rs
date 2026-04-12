@@ -43,6 +43,11 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         return handle_resource_browser_input(key, state);
     }
 
+    // Cost explorer has its own keybindings.
+    if state.active_view == View::CostExplorer {
+        return handle_cost_explorer_input(key, state);
+    }
+
     match (key.modifiers, key.code) {
         // Quit
         (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
@@ -222,6 +227,61 @@ fn handle_resource_search_input(key: KeyEvent, state: &AppState) -> Option<Comma
         _ => None,
     }
 }
+
+/* ============================================================================================== */
+fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    match (key.modifiers, key.code) {
+        // Quit
+        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
+
+        // Navigate breakdown rows
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
+
+        // Period navigation
+        (KeyModifiers::NONE, KeyCode::Char('[') | KeyCode::Char('h')) => {
+            let prev = state.cost_period.previous_month();
+            Some(Command::FetchCostSummary(prev))
+        }
+        (KeyModifiers::NONE, KeyCode::Char(']') | KeyCode::Char('l')) => {
+            match state.cost_period.next_month() {
+                Some(next) => Some(Command::FetchCostSummary(next)),
+                None => None, // Already at current month.
+            }
+        }
+
+        // Refresh
+        (KeyModifiers::NONE, KeyCode::Char('r')) => {
+            Some(Command::FetchCostSummary(state.cost_period.clone()))
+        }
+
+        // Back to context switcher
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            Some(Command::NavigateTo(View::ContextSwitcher))
+        }
+
+        // Quick switch
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            let filtered = quick_switch::build_filtered(state, "");
+            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
+                query: String::new(),
+                filtered,
+                cursor: 0,
+            })))
+        }
+
+        // Help
+        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+
+        // View shortcuts
+        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
+        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
+        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+
+        _ => None,
+    }
+}
+
 
 /* ============================================================================================== */
 fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<Command> {

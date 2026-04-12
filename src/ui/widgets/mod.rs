@@ -1,4 +1,5 @@
 pub mod context_switcher;
+pub mod cost_explorer;
 pub mod modal;
 pub mod quick_switch;
 pub mod resource_browser;
