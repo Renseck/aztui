@@ -71,6 +71,10 @@ install: ## Install the binary
 watch: ## Watch for changes and run tests
 	$(CARGO) watch -x test
 
+reload: ## Fetch latest version and run
+	git pull
+	$(CARGO) run
+
 coverage: ## Generate test coverage report
 ifeq ($(OS),Windows_NT)
 	@powershell -Command "if (-not (Get-Command cargo-tarpaulin -ErrorAction SilentlyContinue)) { Write-Host 'Installing cargo-tarpaulin...' -ForegroundColor Yellow; cargo install cargo-tarpaulin }; cargo tarpaulin --out Html --output-dir coverage"
