@@ -263,7 +263,7 @@ fn render_loading(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme
         Span::styled("Loading cost data…", theme.spinner_style()),
     ]);
     let cmd_line = Line::from(vec![Span::styled(
-        "  Running: az costmanagement query",
+        "  Running: az rest (Cost Management Query API)",
         theme.hint_style(),
     )]);
 

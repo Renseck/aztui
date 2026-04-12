@@ -51,9 +51,22 @@ struct RawResourceGroup {
 #[derive(Debug, Deserialize)]
 struct RawCostQueryResponse {
     #[serde(default)]
+    properties: Option<RawCostQueryProperties>,
+    // Fallback: rows/columns at top level (for flexibility).
+    #[serde(default)]
     rows: Vec<Vec<serde_json::Value>>,
     #[serde(default)]
     columns: Vec<RawCostColumn>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawCostQueryProperties {
+    #[serde(default)]
+    rows: Vec<Vec<serde_json::Value>>,
+    #[serde(default)]
+    columns: Vec<RawCostColumn>,
+    next_link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,11 +230,11 @@ pub fn parse_resource_list(json: &str) -> Result<Vec<Resource>, AppError> {
 }
 
 /* ============================================ Cost ============================================ */
-/// Parses the output of `az costmanagement query` into a [`CostSummary`].
+/// Parses the output of the Cost Management Query REST API into a [`CostSummary`].
 ///
-/// The response contains `rows` with `[cost, service_name, currency]` tuples.
-/// The `scope` and `period` are injected by the caller since they are not
-/// present in the response body.
+/// The response wraps `columns` and `rows` inside a `properties` object.
+/// Each row is `[cost, service_name, currency]`. The `scope` and `period`
+/// are injected by the caller since they are not in the response body.
 ///
 /// # Errors
 /// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
@@ -233,12 +246,19 @@ pub fn parse_cost_query(
     let raw: RawCostQueryResponse = serde_json::from_str(json)
         .map_err(|e| AppError::cli_parse_error(format!("cost query: {}", e)))?;
 
+    // Prefer properties.rows; fall back to top-level rows.
+    let rows = if let Some(ref props) = raw.properties {
+        &props.rows
+    } else {
+        &raw.rows
+    };
+
     let mut currency = String::from("USD");
     let mut breakdown: Vec<CostLineItem> = Vec::new();
     let mut total = 0.0;
 
-    for row in &raw.rows {
-        // Each row is an array: [cost, service_name, currency].
+    for row in rows {
+        // Each row: [cost, service_name, currency].
         if row.len() < 3 {
             continue;
         }
@@ -391,18 +411,21 @@ mod tests {
     ]"#;
 
     const COST_QUERY_JSON: &str = r#"{
-        "columns": [
-            {"name": "Cost", "type": "Number"},
-            {"name": "ServiceName", "type": "String"},
-            {"name": "Currency", "type": "String"}
-        ],
-        "rows": [
-            [612.40, "Virtual Machines", "EUR"],
-            [284.15, "Azure SQL Database", "EUR"],
-            [156.22, "Storage Accounts", "EUR"],
-            [98.50, "Azure Kubernetes Service", "EUR"],
-            [42.30, "Key Vault", "EUR"]
-        ]
+        "properties": {
+            "columns": [
+                {"name": "PreTaxCost", "type": "Number"},
+                {"name": "ServiceName", "type": "String"},
+                {"name": "Currency", "type": "String"}
+            ],
+            "rows": [
+                [612.40, "Virtual Machines", "EUR"],
+                [284.15, "Azure SQL Database", "EUR"],
+                [156.22, "Storage Accounts", "EUR"],
+                [98.50, "Azure Kubernetes Service", "EUR"],
+                [42.30, "Key Vault", "EUR"]
+            ],
+            "nextLink": null
+        }
     }"#;
 
     #[test]
