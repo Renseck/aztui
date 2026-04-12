@@ -73,7 +73,7 @@ watch: ## Watch for changes and run tests
 
 reload: ## Fetch latest version and run
 	git pull
-	$(CARGO) run
+	$(MAKE) run
 
 coverage: ## Generate test coverage report
 ifeq ($(OS),Windows_NT)
