@@ -466,6 +466,10 @@ Step 14 (Event enum) ───┘           │                    │
 
 ---
 
+<!-- =========================================================================================== -->
+<!--                                        PHASE 2 DONE                                         -->
+<!-- =========================================================================================== -->
+
 # Phase 2 — Security Layer
 
 **TL;DR**: Add optional master password protection for local cached data. Argon2id for key derivation, AES-256-GCM for cache encryption at rest, inactivity auto-lock, and optional OS keyring integration. The app must remain fully functional when the security layer is disabled.
@@ -665,7 +669,11 @@ Step 34 (AES-GCM) ───┘                         │
 - **Keyring is optional alternative**: OS keyring replaces the password prompt, it doesn't add a second factor. One or the other, not both.
 - **New dependency**: `zeroize` crate for secure memory clearing. `getrandom` (or `rand`) for salt generation. `keyring` already in Cargo.toml.
 
----
+
+<!-- =========================================================================================== -->
+<!--                                        PHASE 2 DONE                                         -->
+<!-- =========================================================================================== -->
+
 ---
 
 # Phase 3 — Resource Browser
