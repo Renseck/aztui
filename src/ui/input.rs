@@ -64,7 +64,7 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
 
         // Quick switch
-        (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('G')) => {
             let filtered = quick_switch::build_filtered(state, "");
             Some(Command::OpenModal(Box::new(Modal::QuickSwitch { 
                 query: String::new(), 
@@ -77,7 +77,7 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::RefreshContextList),
 
         // Help
-        (KeyModifiers::NONE, KeyCode::Char('?')) => {
+        (KeyModifiers::SHIFT, KeyCode::Char('?')) => {
             if state.active_view == View::Help {
                 Some(Command::NavigateTo(View::ContextSwitcher))
             } else {

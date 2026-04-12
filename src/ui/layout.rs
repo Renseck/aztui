@@ -163,7 +163,7 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
             Span::styled("Focus search", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("  Ctrl+P          ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("  Ctrl+G          ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Quick switch context", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
