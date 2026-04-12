@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+use crate::domain::{Resource, ResourceGroup};
 use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
@@ -24,9 +25,34 @@ struct RawAccount {
 }
 
 /* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawResource {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    resource_type: String,
+    resource_group: String,
+    location: String,
+    #[serde(default)]
+    tags: Option<HashMap<String, String>>,
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawResourceGroup {
+    name: String,
+    location: String,
+    #[serde(default)]
+    tags: Option<HashMap<String, String>>,
+}
+
+/* ============================================================================================== */
 /*                                    Public parsing functions                                    */
 /* ============================================================================================== */
 
+/* ======================================= Auth & context ======================================= */
 /// Parses the output of `az account list --all` into a tenant map and
 /// grouped subscriptions.
 ///
@@ -91,7 +117,6 @@ pub fn parse_account_list(
 }
 
 /* ============================================================================================== */
-
 /// Parses the output of `az account show` into an [`AzureContext`].
 ///
 /// # Errors
@@ -118,6 +143,62 @@ pub fn parse_account_show(json: &str) -> Result<AzureContext, AppError> {
     };
 
     Ok(AzureContext { tenant, subscription })
+}
+
+/* ========================================== Resources ========================================= */
+/// Parses the output of `az group list --subscription <id>` into a list of
+/// [`ResourceGroup`]s.
+///
+/// The `subscription_id` is injected by the caller since the CLI output does
+/// not include it.
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_resource_group_list(
+    json: &str,
+    subscription_id: &str
+) -> Result<Vec<ResourceGroup>, AppError> {
+    let raw_groups: Vec<RawResourceGroup> = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("resource group list: {}", e)))?;
+
+    let mut groups: Vec<ResourceGroup> = raw_groups
+        .into_iter()
+        .map(|rg| ResourceGroup {
+            name: rg.name,
+            subscription_id: subscription_id.to_string(),
+            location: rg.location,
+            tags: rg.tags.unwrap_or_default(),
+        })
+        .collect();
+
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(groups)
+}
+
+/* ============================================================================================== */
+/// Parses the output of `az resource list --resource-group <name>` into a list
+/// of [`Resource`]s.
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_resource_list(json: &str) -> Result<Vec<Resource>, AppError> {
+    let raw_resources: Vec<RawResource> = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("resource list: {}", e)))?;
+
+    let mut resources: Vec<Resource> = raw_resources
+        .into_iter()
+        .map(|r| Resource {
+            id: r.id,
+            name: r.name,
+            resource_type: r.resource_type,
+            resource_group: r.resource_group,
+            location: r.location,
+            tags: r.tags.unwrap_or_default(),
+        })
+        .collect();
+
+    resources.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(resources)
 }
 
 /* ============================================================================================== */
@@ -194,6 +275,46 @@ mod tests {
         }
     ]"#;
 
+    const RESOURCE_GROUP_LIST_JSON: &str = r#"[
+        {
+            "id": "/subscriptions/sub-1-guid/resourceGroups/rg-web",
+            "location": "westeurope",
+            "managedBy": null,
+            "name": "rg-web",
+            "properties": { "provisioningState": "Succeeded" },
+            "tags": { "env": "prod", "team": "platform" },
+            "type": "Microsoft.Resources/resourceGroups"
+        },
+        {
+            "id": "/subscriptions/sub-1-guid/resourceGroups/rg-data",
+            "location": "northeurope",
+            "managedBy": null,
+            "name": "rg-data",
+            "properties": { "provisioningState": "Succeeded" },
+            "tags": {},
+            "type": "Microsoft.Resources/resourceGroups"
+        }
+    ]"#;
+
+    const RESOURCE_LIST_JSON: &str = r#"[
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg-web/providers/Microsoft.Compute/virtualMachines/vm-1",
+            "name": "vm-1",
+            "type": "Microsoft.Compute/virtualMachines",
+            "resourceGroup": "rg-web",
+            "location": "westeurope",
+            "tags": { "env": "prod" }
+        },
+        {
+            "id": "/subscriptions/sub-1/resourceGroups/rg-web/providers/Microsoft.Storage/storageAccounts/store1",
+            "name": "store1",
+            "type": "Microsoft.Storage/storageAccounts",
+            "resourceGroup": "rg-web",
+            "location": "westeurope",
+            "tags": null
+        }
+    ]"#;
+
     #[test]
     fn parse_account_list_groups_by_tenant() {
         let (tenants, by_tenant) =
@@ -226,5 +347,33 @@ mod tests {
         assert_eq!(parse_subscription_state("Enabled"), SubscriptionState::Enabled);
         assert_eq!(parse_subscription_state("Disabled"), SubscriptionState::Disabled);
         assert!(matches!(parse_subscription_state("Expired"), SubscriptionState::Unknown(_)));
+    }
+
+    #[test]
+    fn parse_resource_group_list_basic() {
+        let groups = parse_resource_group_list(RESOURCE_GROUP_LIST_JSON, "sub-1-guid").unwrap();
+        assert_eq!(groups.len(), 2);
+        // Sorted alphabetically by name.
+        assert_eq!(groups[0].name, "rg-data");
+        assert_eq!(groups[1].name, "rg-web");
+        assert_eq!(groups[1].subscription_id, "sub-1-guid");
+        assert_eq!(groups[1].tags.get("env"), Some(&"prod".to_string()));
+    }
+
+    #[test]
+    fn parse_resource_group_list_empty() {
+        let groups = parse_resource_group_list("[]", "sub-1").unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn parse_resource_list_basic() {
+        let resources = parse_resource_list(RESOURCE_LIST_JSON).unwrap();
+        assert_eq!(resources.len(), 2);
+        // Sorted alphabetically by name.
+        assert_eq!(resources[0].name, "store1");
+        assert_eq!(resources[1].name, "vm-1");
+        assert_eq!(resources[1].resource_type, "Microsoft.Compute/virtualMachines");
+        assert!(resources[0].tags.is_empty()); // null tags → empty map
     }
 }
