@@ -181,7 +181,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
         }
 
         // Quick switch
-        (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
             let filtered = quick_switch::build_filtered(state, "");
             Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
                 query: String::new(),
