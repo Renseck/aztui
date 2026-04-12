@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{AppState, Modal, PasswordMode, View};
+use crate::app::{AppState, Modal, PasswordMode, View, Pane};
 use crate::command::Command;
-use crate::ui::widgets::{context_switcher, quick_switch};
+use crate::ui::widgets::{context_switcher, quick_switch, resource_browser};
 
 /* ============================================================================================== */
 /// Maps a key event to a [`Command`], taking application state into account.
@@ -38,6 +38,11 @@ pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
 /* ============================================================================================== */
 
 fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    // Resource browser has its own keybindings.
+    if state.active_view == View::ResourceBrowser {
+        return handle_resource_browser_input(key, state);
+    }
+
     match (key.modifiers, key.code) {
         // Quit
         (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
@@ -127,6 +132,93 @@ fn handle_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
             Some(Command::UpdateSearch(q))
         }
 
+        _ => None,
+    }
+}
+
+/* ============================================================================================== */
+fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    // Search mode within resource browser.
+    if state.search_focused {
+        return handle_resource_search_input(key, state);
+    }
+
+    match (key.modifiers, key.code) {
+        // Quit
+        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
+
+        // Pane switching
+        (KeyModifiers::NONE, KeyCode::Tab)
+        | (KeyModifiers::NONE, KeyCode::Right)
+        | (KeyModifiers::NONE, KeyCode::Left) => Some(Command::ToggleResourcePane),
+
+        // Navigation within focused pane
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
+
+        // Enter: in left pane, load resources + focus right; in right pane, no-op for now
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            if state.resource_browser_focus == Pane::Left {
+                if let Some(rg_name) = resource_browser::selected_resource_group_name(state) {
+                    Some(Command::ListResources(rg_name))
+                } else {
+                    None
+                }
+            } else {
+                None // No drill-down in Phase 3
+            }
+        }
+
+        // Search
+        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
+
+        // Refresh
+        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::ListResourceGroups),
+
+        // Back to context switcher
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            Some(Command::NavigateTo(View::ContextSwitcher))
+        }
+
+        // Quick switch
+        (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+            let filtered = quick_switch::build_filtered(state, "");
+            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
+                query: String::new(),
+                filtered,
+                cursor: 0,
+            })))
+        }
+
+        // Help
+        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+
+        // View shortcuts
+        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
+        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
+        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+
+        _ => None,
+    }
+}
+
+/* ============================================================================================== */
+fn handle_resource_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    match key.code {
+        KeyCode::Esc => {
+            // Clear resource search and unfocus.
+            Some(Command::UpdateSearch(String::from("\x1B")))
+        }
+        KeyCode::Backspace => {
+            let mut q = state.resource_search_query.clone();
+            q.pop();
+            Some(Command::UpdateResourceSearch(q))
+        }
+        KeyCode::Char(c) => {
+            let mut q = state.resource_search_query.clone();
+            q.push(c);
+            Some(Command::UpdateResourceSearch(q))
+        }
         _ => None,
     }
 }

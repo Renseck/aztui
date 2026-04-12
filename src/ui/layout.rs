@@ -99,7 +99,9 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
                 context_switcher::render(frame, area, state, theme);
             }
         }
-        View::ResourceBrowser => render_phase_stub(frame, area, "Resource Browser", "Phase 3", theme),
+        View::ResourceBrowser => {
+            crate::ui::widgets::resource_browser::render(frame, area, state, theme);
+        }
         View::CostExplorer => render_phase_stub(frame, area, "Cost Explorer", "Phase 4", theme),
         View::Help => render_help(frame, area, theme),
     }
@@ -139,6 +141,10 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
             Span::styled("Navigate list", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
+            Span::styled("  Tab / ← / →     ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Switch pane (resource browser)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
             Span::styled("  Enter           ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Select / confirm", theme.surface_style().fg(theme.text)),
         ]),
@@ -168,9 +174,9 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
             Span::styled("  1               ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Context switcher", theme.surface_style().fg(theme.text)),
         ]),
-        Line::from(vec![
+         Line::from(vec![
             Span::styled("  2               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Resource browser  (Phase 3)", theme.surface_style().fg(theme.subtle)),
+            Span::styled("Resource browser", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("  3               ", theme.surface_style().fg(theme.azure_light)),

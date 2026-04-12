@@ -251,6 +251,19 @@ pub async fn dispatch_command(
             state.search_query = q;
         }
 
+        Command::ToggleResourcePane => {
+            state.resource_browser_focus = match state.resource_browser_focus {
+                Pane::Left => Pane::Right,
+                Pane::Right => Pane::Left,
+            };
+            state.resource_search_query.clear();
+            state.search_focused = false;
+        }
+
+        Command::UpdateResourceSearch(q) => {
+            state.resource_search_query = q;
+        }
+
         Command::OpenModal(modal) => {
             let m = *modal;
             events.push(Event::ModalOpened(m.clone()));
@@ -270,7 +283,24 @@ pub async fn dispatch_command(
                 if *cursor > 0 {
                     *cursor -= 1;
                 }
-                let _ = filtered; // used via state.modal above
+                let _ = filtered;
+            } else if state.active_view == View::ResourceBrowser {
+                match state.resource_browser_focus {
+                    Pane::Left => {
+                        if state.resource_group_cursor > 0 {
+                            state.resource_group_cursor -= 1;
+                            // Auto-load resources for newly selected group.
+                            if let Some(rg_name) = crate::ui::widgets::resource_browser::selected_resource_group_name(state) {
+                                let _ = cmd_tx.try_send(Command::ListResources(rg_name));
+                            }
+                        }
+                    }
+                    Pane::Right => {
+                        if state.resource_cursor > 0 {
+                            state.resource_cursor -= 1;
+                        }
+                    }
+                }
             } else if state.context_list_cursor > 0 {
                 state.context_list_cursor -= 1;
             }
@@ -285,9 +315,31 @@ pub async fn dispatch_command(
                 if *cursor < max {
                     *cursor += 1;
                 }
+            } else if state.active_view == View::ResourceBrowser {
+                match state.resource_browser_focus {
+                    Pane::Left => {
+                        let max = crate::ui::widgets::resource_browser::filtered_resource_groups(state)
+                            .len()
+                            .saturating_sub(1);
+                        if state.resource_group_cursor < max {
+                            state.resource_group_cursor += 1;
+                            // Auto-load resources for newly selected group.
+                            if let Some(rg_name) = crate::ui::widgets::resource_browser::selected_resource_group_name(state) {
+                                let _ = cmd_tx.try_send(Command::ListResources(rg_name));
+                            }
+                        }
+                    }
+                    Pane::Right => {
+                        let max = crate::ui::widgets::resource_browser::filtered_resources(state)
+                            .len()
+                            .saturating_sub(1);
+                        if state.resource_cursor < max {
+                            state.resource_cursor += 1;
+                        }
+                    }
+                }
             } else {
                 state.context_list_cursor += 1;
-                // Clamping is handled by the widget since it knows the list length.
             }
         }
 

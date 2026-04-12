@@ -58,6 +58,12 @@ pub enum Command {
     /// Fetch resources within a specific resource group.
     ListResources(String),
 
+    /// Toggle focus between left and right pane in resource browser.
+    ToggleResourcePane,
+
+    /// Update the resource browser search query.
+    UpdateResourceSearch(String),
+
     /* ===================================== Cost (Phase 4) ===================================== */
 
     FetchCostSummary(CostPeriod),
