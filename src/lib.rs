@@ -8,4 +8,5 @@ pub mod errors;
 pub mod event;
 pub mod providers;
 pub mod security;
+pub mod setup;
 pub mod ui;

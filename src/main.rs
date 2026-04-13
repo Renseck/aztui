@@ -34,6 +34,19 @@ struct Cli {
     /// Reset the master password (re-run setup flow).
     #[arg(long)]
     reset_password: bool,
+
+    #[command(subcommand)]
+    command: Option<SubCommand>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum SubCommand {
+    /// Initialize aztui: create config directory, install binary to PATH, write default config
+    Init {
+        /// Overwrite existing config.toml
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /* ============================================================================================== */
@@ -47,6 +60,30 @@ async fn main() -> Result<(), AppError> {
         let _ = disable_raw_mode();
         let _ = execute!(io::stderr(), LeaveAlternateScreen);
     }));
+
+    // Handle subcommands that run headlessly (no TUI).
+    if let Some(subcmd) = &cli.command {
+        match subcmd {
+            SubCommand::Init { force } => {
+                match aztui::setup::run_init(*force) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        eprintln!("Setup failed: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    // First-run detection: if ~/.aztui/ doesn't exist, suggest init.
+    if aztui::setup::is_first_run() {
+        eprintln!("Welcome to aztui! It looks like this is your first run.");
+        eprintln!("Run `aztui init` to set up the config directory and add aztui to your PATH.");
+        eprintln!();
+        eprintln!("Continuing with default settings...");
+        eprintln!();
+    }
 
     let config = AppConfig::load(cli.config)?;
     let theme = Theme::detect();
