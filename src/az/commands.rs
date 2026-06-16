@@ -136,3 +136,64 @@ pub fn cost_query_by_resource_group(
         "json".to_string(),
     ]
 }
+
+/* ============================================================================================== */
+/*                                       VM run-command                                           */
+/* ============================================================================================== */
+
+/// Returns args for
+/// `az vm run-command invoke --subscription <sub> --resource-group <rg>
+///  --name <vm> --command-id RunPowerShellScript --scripts <script> --output json`.
+///
+/// `--subscription` is passed explicitly so the call cannot target the wrong
+/// active context.
+pub fn vm_run_command_powershell(
+    subscription_id: &str,
+    resource_group: &str,
+    vm_name: &str,
+    script: &str,
+) -> Vec<String> {
+    vec![
+        "vm".to_string(),
+        "run-command".to_string(),
+        "invoke".to_string(),
+        "--subscription".to_string(),
+        subscription_id.to_string(),
+        "--resource-group".to_string(),
+        resource_group.to_string(),
+        "--name".to_string(),
+        vm_name.to_string(),
+        "--command-id".to_string(),
+        "RunPowerShellScript".to_string(),
+        "--scripts".to_string(),
+        script.to_string(),
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vm_run_command_builds_expected_args() {
+        let args = vm_run_command_powershell("sub-1", "rg-web", "web-01", "Get-Date");
+        assert_eq!(
+            args,
+            vec![
+                "vm", "run-command", "invoke",
+                "--subscription", "sub-1",
+                "--resource-group", "rg-web",
+                "--name", "web-01",
+                "--command-id", "RunPowerShellScript",
+                "--scripts", "Get-Date",
+                "--output", "json",
+            ]
+        );
+    }
+}

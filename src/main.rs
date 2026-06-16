@@ -160,6 +160,13 @@ async fn main() -> Result<(), AppError> {
         ),
     );
 
+    let vm: Arc<dyn aztui::domain::VmProvider> = Arc::new(
+        aztui::providers::AzVmProvider::new(
+            Arc::clone(&executor),
+            Duration::from_secs(180),
+        ),
+    );
+
     let mut state = AppState::new(config.clone(), security);
 
     // Populate state from disk cache if available.
@@ -227,6 +234,7 @@ async fn main() -> Result<(), AppError> {
         Arc::clone(&auth),
         Arc::clone(&resources),
         Arc::clone(&cost),
+        Arc::clone(&vm),
         &theme,
         tick_duration,
     )
@@ -261,6 +269,7 @@ async fn run_loop(
     auth: Arc<dyn aztui::domain::AuthProvider>,
     resources: Arc<dyn aztui::domain::ResourceProvider>,
     cost: Arc<dyn aztui::domain::CostProvider>,
+    vm: Arc<dyn aztui::domain::VmProvider>,
     theme: &Theme,
     tick: Duration,
 ) -> Result<(), AppError> {
@@ -294,12 +303,13 @@ async fn run_loop(
         // 3. Process pending commands
         while let Ok(cmd) = cmd_rx.try_recv() {
             let emitted = dispatch_command(
-                state, 
-                cmd, 
-                cmd_tx, 
+                state,
+                cmd,
+                cmd_tx,
                 Arc::clone(&auth),
-            Arc::clone(&resources),
-        Arc::clone(&cost),
+                Arc::clone(&resources),
+                Arc::clone(&cost),
+                Arc::clone(&vm),
             )
             .await;
             for ev in emitted {

@@ -3,15 +3,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crossterm::event::{KeyCode, KeyModifiers};
 use tokio::sync::{mpsc};
 use ratatui::widgets::ListState;
+use tui_textarea::{Input, Key, TextArea};
 
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::auth::{AuthProvider};
 use crate::domain::cost::CostProvider;
-use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant};
+use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
 use crate::domain::resources::ResourceProvider;
+use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
 use crate::security::{SecurityManager};
@@ -30,6 +33,7 @@ pub enum View {
     ContextSwitcher,
     ResourceBrowser,
     CostExplorer,
+    RunCommand,
     Help,
 }
 
@@ -74,6 +78,64 @@ pub enum PasswordMode {
 pub enum Pane {
     Left,
     Right
+}
+
+/* ============================================================================================== */
+
+/// Which pane of the run-command view has focus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunPane {
+    Editor,
+    Output,
+}
+
+/* ============================================================================================== */
+
+/// Lifecycle of a run-command invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunStatus {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+}
+
+/* ============================================================================================== */
+
+/// State for the VM run-command view: which VM, the script being edited, and the
+/// most recent execution result.
+#[derive(Debug)]
+pub struct RunCommandSession {
+    pub subscription_id: String,
+    pub resource_group: String,
+    pub vm_name: String,
+    pub editor: TextArea<'static>,
+    pub status: RunStatus,
+    pub output: Option<RunCommandOutput>,
+    pub output_scroll: u16,
+    pub focus: RunPane,
+}
+
+impl RunCommandSession {
+    pub fn new(subscription_id: String, resource_group: String, vm_name: String) -> Self {
+        let mut editor = TextArea::default();
+        editor.set_placeholder_text("Enter a PowerShell script, then press F5 to run");
+        Self {
+            subscription_id,
+            resource_group,
+            vm_name,
+            editor,
+            status: RunStatus::Idle,
+            output: None,
+            output_scroll: 0,
+            focus: RunPane::Editor,
+        }
+    }
+
+    /// The full script text, lines joined with newlines.
+    pub fn script(&self) -> String {
+        self.editor.lines().join("\n")
+    }
 }
 
 /* ============================================================================================== */
@@ -135,6 +197,9 @@ pub struct AppState {
     pub cost_summary: Option<CostSummary>,
     pub cost_period: CostPeriod,
     pub cost_selected_index: usize,
+
+    // Run Command
+    pub run_command: Option<RunCommandSession>,
     
     // Async operations
     pub pending_operations: HashMap<OperationId, PendingOperation>,
@@ -186,6 +251,7 @@ impl AppState {
             cost_summary: None,
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
+            run_command: None,
             pending_operations: HashMap::new(),
             next_operation_id: 0,
             locked,
@@ -243,6 +309,7 @@ const SLOT_CONTEXT_SWITCH: OperationId = u64::MAX - 2;
 const SLOT_RESOURCE_GROUPS: OperationId = u64::MAX - 3;
 const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 const SLOT_COST: OperationId = u64::MAX - 5;
+const SLOT_RUN_COMMAND: OperationId = u64::MAX - 6;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -253,6 +320,7 @@ pub async fn dispatch_command(
     auth: Arc<dyn AuthProvider>,
     resources: Arc<dyn ResourceProvider>,
     cost: Arc<dyn CostProvider>,
+    vm: Arc<dyn VmProvider>,
 ) -> Vec<Event> {
     state.last_interaction = Instant::now();
     let mut events = Vec::new();
@@ -307,6 +375,115 @@ pub async fn dispatch_command(
 
         Command::UpdateResourceSearch(q) => {
             state.resource_search_query = q;
+        }
+
+        Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
+            state.run_command = Some(RunCommandSession::new(
+                subscription_id,
+                resource_group,
+                vm_name,
+            ));
+            state.active_view = View::RunCommand;
+            events.push(Event::ViewChanged(View::RunCommand));
+        }
+
+        Command::ScriptInput(key) => {
+            if let Some(session) = state.run_command.as_mut() {
+                session.editor.input(key_to_input(key));
+            }
+        }
+
+        Command::ToggleRunPane => {
+            if let Some(session) = state.run_command.as_mut() {
+                session.focus = match session.focus {
+                    RunPane::Editor => RunPane::Output,
+                    RunPane::Output => RunPane::Editor,
+                };
+            }
+        }
+
+        Command::ScrollRunOutput(delta) => {
+            if let Some(session) = state.run_command.as_mut() {
+                if delta < 0 {
+                    session.output_scroll =
+                        session.output_scroll.saturating_sub((-delta) as u16);
+                } else {
+                    session.output_scroll =
+                        session.output_scroll.saturating_add(delta as u16);
+                }
+            }
+        }
+
+        Command::RunVmCommand => {
+            // Close the confirmation modal that triggered us.
+            state.modal = None;
+
+            let (sub, rg, vm_name, script) = match state.run_command.as_ref() {
+                Some(s) => (
+                    s.subscription_id.clone(),
+                    s.resource_group.clone(),
+                    s.vm_name.clone(),
+                    s.script(),
+                ),
+                None => return events,
+            };
+            if script.trim().is_empty() {
+                return events;
+            }
+
+            abort_slot(state, SLOT_RUN_COMMAND);
+            if let Some(session) = state.run_command.as_mut() {
+                session.status = RunStatus::Running;
+                session.output = None;
+            }
+
+            let op_id = SLOT_RUN_COMMAND;
+            let tx = cmd_tx.clone();
+            let vm_provider = Arc::clone(&vm);
+            let vm_name_clone = vm_name.clone();
+
+            let handle = tokio::spawn(async move {
+                let result = vm_provider
+                    .run_powershell(&sub, &rg, &vm_name, &script)
+                    .await;
+                let _ = tx.send(Command::VmCommandResult(result)).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: format!("Running command on {}...", vm_name_clone),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::VmCommandResult(result) => {
+            state.pending_operations.remove(&SLOT_RUN_COMMAND);
+            events.push(Event::OperationCompleted(SLOT_RUN_COMMAND));
+
+            match result {
+                Ok(output) => {
+                    if let Some(session) = state.run_command.as_mut() {
+                        session.status = if output.succeeded {
+                            RunStatus::Completed
+                        } else {
+                            RunStatus::Failed
+                        };
+                        session.output = Some(output);
+                        session.output_scroll = 0;
+                    }
+                }
+                Err(e) => {
+                    if let Some(session) = state.run_command.as_mut() {
+                        session.status = RunStatus::Failed;
+                    }
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
         }
 
         Command::OpenModal(modal) => {
@@ -955,6 +1132,37 @@ fn abort_slot(state: &mut AppState, slot_id: OperationId) {
         }
     }
 }
+
+/// Converts a crossterm `KeyEvent` into a `tui_textarea::Input`. Done manually
+/// because tui-textarea's `From<KeyEvent>` impl is bound to its own (older)
+/// crossterm version, which differs from the one Ratatui 0.30 uses.
+fn key_to_input(key: crossterm::event::KeyEvent) -> Input {
+    let k = match key.code {
+        KeyCode::Char(c) => Key::Char(c),
+        KeyCode::Backspace => Key::Backspace,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::Up => Key::Up,
+        KeyCode::Down => Key::Down,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::Delete => Key::Delete,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::Esc => Key::Esc,
+        KeyCode::F(n) => Key::F(n),
+        _ => Key::Null,
+    };
+    Input {
+        key: k,
+        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+        alt: key.modifiers.contains(KeyModifiers::ALT),
+        shift: key.modifiers.contains(KeyModifiers::SHIFT),
+    }
+}
+
 
 /* ============================================================================================== */
 /*                                              Tests                                             */

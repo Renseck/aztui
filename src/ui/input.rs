@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{AppState, Modal, PasswordMode, View, Pane};
+use crate::app::{AppState, Modal, PasswordMode, View, Pane, RunPane};
 use crate::command::Command;
 use crate::ui::widgets::{context_switcher, quick_switch, resource_browser};
 
@@ -46,6 +46,11 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     // Cost explorer has its own keybindings.
     if state.active_view == View::CostExplorer {
         return handle_cost_explorer_input(key, state);
+    }
+
+    // Run-command view has its own keybindings.
+    if state.active_view == View::RunCommand {
+        return handle_run_command_input(key, state);
     }
 
     match (key.modifiers, key.code) {
@@ -170,7 +175,11 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
                     None
                 }
             } else {
-                None // No drill-down in Phase 3
+                resource_browser::selected_vm_target(state).map(|t| Command::OpenRunCommand {
+                    subscription_id: t.subscription_id,
+                    resource_group: t.resource_group,
+                    vm_name: t.vm_name,
+                })
             }
         }
 
@@ -282,6 +291,45 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
     }
 }
 
+/* ============================================================================================== */
+fn handle_run_command_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    let session = state.run_command.as_ref()?;
+
+    match (key.modifiers, key.code) {
+        // Run the script (F5): confirm first.
+        (_, KeyCode::F(5)) => {
+            if session.script().trim().is_empty() {
+                return None;
+            }
+            let message = format!(
+                "Run this PowerShell script on {} (rg: {})?",
+                session.vm_name, session.resource_group
+            );
+            Some(Command::OpenModal(Box::new(Modal::Confirm {
+                message,
+                on_confirm: Box::new(Command::RunVmCommand),
+            })))
+        }
+
+        // Back to the resource browser.
+        (KeyModifiers::NONE, KeyCode::Esc) => Some(Command::NavigateTo(View::ResourceBrowser)),
+
+        // Toggle editor/output focus.
+        (KeyModifiers::NONE, KeyCode::Tab) => Some(Command::ToggleRunPane),
+
+        // Scroll output when it is focused.
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) if session.focus == RunPane::Output => {
+            Some(Command::ScrollRunOutput(-1))
+        }
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) if session.focus == RunPane::Output => {
+            Some(Command::ScrollRunOutput(1))
+        }
+
+        // Otherwise, feed the key to the editor when it has focus.
+        _ if session.focus == RunPane::Editor => Some(Command::ScriptInput(key)),
+        _ => None,
+    }
+}
 
 /* ============================================================================================== */
 fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<Command> {
