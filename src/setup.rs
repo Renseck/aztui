@@ -158,10 +158,10 @@ fn install_binary(config_dir: &Path) -> Result<bool, AppError> {
 
     let target = config_dir.join("aztui.exe");
 
-    // Skip if already installed at this location (same file).
-    if target.exists() && same_file(&current_exe, &target) {
+    // If we're already running the installed copy, there's nothing to do.
+    if current_exe == target {
         println!("\r  [2/4] Installing binary...              ");
-        println!("        → {} (already current)  ✓", target.display());
+        println!("        → {} (running in place)  ✓", target.display());
         return Ok(false);
     }
 
@@ -304,13 +304,4 @@ fn check_az_cli() -> Option<String> {
     }
 
     None
-}
-
-/* ============================================================================================== */
-/// Compares two files by length as a quick "same binary" heuristic.
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (fs::metadata(a), fs::metadata(b)) {
-        (Ok(ma), Ok(mb)) => ma.len() == mb.len(),
-        _ => false,
-    }
 }
