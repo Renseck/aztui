@@ -47,6 +47,12 @@ enum SubCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Update aztui to the latest GitHub release
+    Update {
+        /// Only check for an update; do not install it
+        #[arg(long)]
+        check: bool,
+    }
 }
 
 /* ============================================================================================== */
@@ -55,10 +61,11 @@ async fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
 
     // Install panic hook to restore terminal before printing the panic.
-    let _original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |_info| {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stderr(), LeaveAlternateScreen);
+        original_hook(info);
     }));
 
     // Handle subcommands that run headlessly (no TUI).
@@ -70,6 +77,25 @@ async fn main() -> Result<(), AppError> {
                     Err(e) => {
                         eprintln!("Setup failed: {}", e);
                         return Err(e);
+                    }
+                }
+            }
+            SubCommand::Update { check } => {
+                let check = *check;
+                let outcome =
+                    tokio::task::spawn_blocking(move || aztui::update::run_update(check)).await;
+                match outcome {
+                    Ok(Ok(())) => return Ok(()),
+                    Ok(Err(e)) => {
+                        eprintln!("Update failed: {}", e);
+                        return Err(e);
+                    }
+                    Err(join_err) => {
+                        eprintln!("Update failed: {}", join_err);
+                        return Err(AppError::unknown(format!(
+                            "update task panicked: {}",
+                            join_err
+                        )));
                     }
                 }
             }

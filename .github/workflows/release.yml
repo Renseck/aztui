@@ -2,14 +2,49 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [master]
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need full history + all tags
+
+      - name: Validate version is unique and increasing
+        id: check
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.+)".*/\1/')
+          if [ -z "$ver" ]; then
+            echo "::error::Could not read version from Cargo.toml"; exit 1
+          fi
+
+          # Uniqueness: the tag must not already exist.
+          if git rev-parse "v$ver" >/dev/null 2>&1; then
+            echo "::error::Tag v$ver already exists — bump the version in Cargo.toml"; exit 1
+          fi
+
+          # Monotonic: ver must be strictly greater than the highest existing tag.
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          latest_ver=${latest#v}
+          if [ -n "$latest_ver" ]; then
+            highest=$(printf '%s\n%s\n' "$latest_ver" "$ver" | sort -V | tail -n1)
+            if [ "$ver" = "$latest_ver" ] || [ "$highest" != "$ver" ]; then
+              echo "::error::Version $ver is not greater than latest release $latest_ver"; exit 1
+            fi
+          fi
+
+          echo "Releasing v$ver (previous: ${latest:-none})"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: validate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,8 +55,17 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 target/release/aztui.exe).Hash.ToLower()
+          "$hash  aztui.exe" | Out-File -Encoding ascii -NoNewline target/release/aztui.exe.sha256
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/aztui.exe
+          tag_name: v${{ needs.validate.outputs.version }}
+          files: |
+            target/release/aztui.exe
+            target/release/aztui.exe.sha256
           generate_release_notes: true

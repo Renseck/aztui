@@ -1,0 +1,42 @@
+name: Version check
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history + tags for comparison
+
+      - name: Ensure Cargo.toml version is bumped above master
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE" --depth=1
+
+          new=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.+)".*/\1/')
+          base=$(git show "origin/$BASE:Cargo.toml" | grep -m1 '^version' | sed -E 's/.*"(.+)".*/\1/')
+
+          if [ -z "$new" ]; then
+            echo "::error::Could not read version from Cargo.toml"; exit 1
+          fi
+
+          # Must not collide with an existing tag.
+          if git rev-parse "v$new" >/dev/null 2>&1; then
+            echo "::error::Tag v$new already exists — choose a higher version"; exit 1
+          fi
+
+          # Must differ from, and be greater than, master's version.
+          if [ "$new" = "$base" ]; then
+            echo "::error::Version not bumped (still $new). Increase it in Cargo.toml before merging."; exit 1
+          fi
+          highest=$(printf '%s\n%s\n' "$base" "$new" | sort -V | tail -n1)
+          if [ "$highest" != "$new" ]; then
+            echo "::error::Version $new is lower than master's $base"; exit 1
+          fi
+
+          echo "Version OK: $base -> $new"
