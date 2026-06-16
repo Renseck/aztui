@@ -151,6 +151,9 @@ pub struct UiConfig {
     pub mouse_enabled: bool,
     pub status_bar_position: StatusBarPosition,
     pub show_operation_timing: bool,
+    /// Number of rows kept visible above/below the cursor before the list
+    /// scrolls (vim `scrolloff`). 0 reproduces edge-scrolling.
+    pub scroll_off: usize,
 }
 
 impl Default for UiConfig {
@@ -159,6 +162,7 @@ impl Default for UiConfig {
             mouse_enabled: true,
             status_bar_position: StatusBarPosition::default(),
             show_operation_timing: true,
+            scroll_off: 3,
         }
     }
 }
@@ -217,5 +221,28 @@ mod duration_secs {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
         let secs = u64::deserialize(d)?;
         Ok(Duration::from_secs(secs))
+    }
+}
+
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_scroll_off_defaults_to_three() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.ui.scroll_off, 3);
+    }
+
+    #[test]
+    fn ui_scroll_off_parses_from_toml() {
+        let toml = "[ui]\nscroll_off = 5\n";
+        let cfg: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.ui.scroll_off, 5);
     }
 }
