@@ -61,6 +61,11 @@ pub fn render(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppState, 
             format!("⚠ {} ", err.kind_label()),
             theme.error_style(),
         )])
+    } else if let Some(version) = &state.update_available {
+        Line::from(vec![Span::styled(
+            format!("↑ v{} available — run: aztui update ", version),
+            theme.active_context_indicator_style(),
+        )])
     } else {
         Line::from(vec![Span::styled("? help  q quit ", theme.hint_style())])
     };

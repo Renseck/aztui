@@ -1,5 +1,7 @@
 //! Self-update: checking GitHub releases and replacing the running binary.
 
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::errors::AppError;
@@ -113,6 +115,55 @@ fn hex_lower(bytes: &[u8]) -> String {
         s.push_str(&format!("{:02x}", b));
     }
     s
+}
+
+/* ============================================================================================== */
+/*                                     Throttled check helper                                     */
+/* ============================================================================================== */
+
+/// Path to the timestamp file used to throttle background update checks.
+fn check_stamp_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".aztui").join(".update_check"))
+}
+
+/// Returns `true` if a background update check should run now (no stamp, or the
+/// stamp is older than 24h). Best-effort: any error means "go ahead and check".
+pub fn should_check_now() -> bool {
+    let Some(path) = check_stamp_path() else {
+        return true;
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return true;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    match SystemTime::now().duration_since(modified) {
+        Ok(age) => age >= Duration::from_secs(24 * 60 * 60),
+        Err(_) => true,
+    }
+}
+
+/// Records that a background check just ran (touches the stamp file).
+pub fn record_check() {
+    if let Some(path) = check_stamp_path() {
+        let _ = std::fs::write(&path, b"");
+    }
+}
+
+/// Background check: if throttle allows and a newer release exists, returns its
+/// version. Synchronous; call via `spawn_blocking`.
+pub fn background_check() -> Option<String> {
+    if !should_check_now() {
+        return None;
+    }
+    record_check();
+    let info = fetch_latest_release().ok()?;
+    if is_newer(env!("CARGO_PKG_VERSION"), &info.version) {
+        Some(info.version)
+    } else {
+        None
+    }
 }
 
 /* ============================================================================================== */

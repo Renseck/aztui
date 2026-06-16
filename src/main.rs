@@ -202,6 +202,18 @@ async fn main() -> Result<(), AppError> {
             .await
             .map_err(|e| AppError::unknown(e.to_string()))?;
     }
+
+    // Background, non-blocking update check (throttled to once per 24h).
+    {
+        let cmd_tx = cmd_tx.clone();
+        tokio::spawn(async move {
+            if let Ok(Some(version)) =
+                tokio::task::spawn_blocking(aztui::update::background_check).await
+            {
+                let _ = cmd_tx.send(Command::NotifyUpdateAvailable(version)).await;
+            }
+        });
+    }
     
     let tick_duration = Duration::from_millis(100);
     let result = run_loop(

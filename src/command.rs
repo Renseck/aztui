@@ -85,6 +85,10 @@ pub enum Command {
     InvalidateAllCaches,
     CancelOperation(crate::app::OperationId),
 
+    /// Delivered by the background update check when a newer release exists.
+    #[doc(hidden)]
+    NotifyUpdateAvailable(String),
+
     /* ================================= Internal async results ================================= */
 
     /// Delivered by async tasks when context list fetch completes.
