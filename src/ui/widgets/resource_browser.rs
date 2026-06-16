@@ -192,14 +192,17 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &The
         })
         .collect();
 
-    let mut list_state = ListState::default();
-    if is_focused && !filtered.is_empty() {
-        list_state.select(Some(cursor));
-    }
-
     let list = List::new(items)
         .style(theme.surface_style())
-        .highlight_style(theme.selected_style());
+        .highlight_style(theme.selected_style())
+        .scroll_padding(state.config.ui.scroll_off);
+
+    let mut list_state = state.scroll.resource_groups.borrow_mut();
+    if is_focused && !filtered.is_empty() {
+        list_state.select(Some(cursor));
+    } else {
+        list_state.select(None);
+    }
 
     frame.render_widget(block, area);
     frame.render_stateful_widget(list, inner, &mut list_state);
@@ -285,14 +288,17 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
         })
         .collect();
 
-    let mut list_state = ListState::default();
-    if is_focused && !filtered.is_empty() {
-        list_state.select(Some(cursor));
-    }
-
     let list = List::new(items)
         .style(theme.surface_style())
-        .highlight_style(theme.selected_style());
+        .highlight_style(theme.selected_style())
+        .scroll_padding(state.config.ui.scroll_off);
+
+    let mut list_state = state.scroll.resources.borrow_mut();
+    if is_focused && !filtered.is_empty() {
+        list_state.select(Some(cursor));
+    } else {
+        list_state.select(None);
+    }
 
     frame.render_widget(block, area);
     frame.render_stateful_widget(list, inner, &mut list_state);
