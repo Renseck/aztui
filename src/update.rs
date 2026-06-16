@@ -4,6 +4,37 @@ use sha2::{Digest, Sha256};
 
 use crate::errors::AppError;
 
+
+/* ============================================================================================== */
+/*                                     Headless `update` command                                  */
+/* ============================================================================================== */
+
+/// Runs the `aztui update` subcommand. When `check_only`, reports availability
+/// without changing anything. Prints progress to stdout. Synchronous.
+pub fn run_update(check_only: bool) -> Result<(), AppError> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("  aztui v{} — checking for updates...", current);
+
+    let info = fetch_latest_release()?;
+
+    if !is_newer(current, &info.version) {
+        println!("  You're on the latest version ({}).", current);
+        return Ok(());
+    }
+
+    println!("  Update available: {} → {}", current, info.version);
+
+    if check_only {
+        println!("  Run `aztui update` to install it.");
+        return Ok(());
+    }
+
+    println!("  Downloading and verifying...");
+    apply_update(&info)?;
+    println!("  Updated to {}. Restart aztui to use the new version.", info.version);
+    Ok(())
+}
+
 /* ============================================================================================== */
 /*                                        Apply an update                                         */
 /* ============================================================================================== */
