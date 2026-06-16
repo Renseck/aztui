@@ -1,6 +1,88 @@
 //! Self-update: checking GitHub releases and replacing the running binary.
 
+use sha2::{Digest, Sha256};
+
 use crate::errors::AppError;
+
+/* ============================================================================================== */
+/*                                        Apply an update                                         */
+/* ============================================================================================== */
+
+/// Downloads the release binary (and its `.sha256` sidecar, if present),
+/// verifies the checksum, and replaces the running executable in place.
+/// Synchronous; call via `spawn_blocking` from async contexts.
+pub fn apply_update(info: &ReleaseInfo) -> Result<(), AppError> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("aztui-self-update")
+        .build()
+        .map_err(|e| AppError::unknown(format!("update: http client: {}", e)))?;
+
+    // Download the binary into a temp file.
+    let tmp_dir = tempfile::tempdir()
+        .map_err(|e| AppError::unknown(format!("update: temp dir: {}", e)))?;
+    let tmp_bin = tmp_dir.path().join("aztui-new.exe");
+
+    let bytes = client
+        .get(&info.bin_url)
+        .header(reqwest::header::ACCEPT, "application/octet-stream")
+        .send()
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.bytes())
+        .map_err(|e| AppError::unknown(format!("update: download binary: {}", e)))?;
+
+    // Verify checksum if a sidecar is published.
+    if let Some(sha_url) = &info.sha256_url {
+        let expected = client
+            .get(sha_url)
+            .header(reqwest::header::ACCEPT, "application/octet-stream")
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.text())
+            .map_err(|e| AppError::unknown(format!("update: download checksum: {}", e)))?;
+        verify_sha256(&bytes, &expected)?;
+    }
+
+    std::fs::write(&tmp_bin, &bytes)
+        .map_err(|e| AppError::unknown(format!("update: write temp binary: {}", e)))?;
+
+    // Atomically replace the running executable.
+    self_replace::self_replace(&tmp_bin)
+        .map_err(|e| AppError::unknown(format!("update: replace binary: {}", e)))?;
+
+    Ok(())
+}
+
+/// Compares the SHA-256 of `data` against the first whitespace-delimited token of
+/// `checksum_text` (the standard `<hash>  <filename>` sidecar format).
+fn verify_sha256(data: &[u8], checksum_text: &str) -> Result<(), AppError> {
+    let expected = checksum_text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let actual = hex_lower(&hasher.finalize());
+
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(AppError::unknown(format!(
+            "update: checksum mismatch (expected {}, got {})",
+            expected, actual
+        )))
+    }
+}
+
+/// Lowercase hex encoding of a byte slice (avoids pulling in the `hex` crate).
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
 
 /* ============================================================================================== */
 /*                                       Version comparison                                       */
@@ -114,5 +196,19 @@ mod tests {
         assert!(!is_newer("0.3", "0.4.0"));
         assert!(!is_newer("garbage", "0.4.0"));
         assert!(!is_newer("0.3.1", "not-a-version"));
+    }
+
+    #[test]
+    fn verify_sha256_accepts_matching_digest() {
+        // echo -n "hello" | sha256sum
+        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let text = format!("{}  aztui.exe", expected);
+        assert!(super::verify_sha256(b"hello", &text).is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_rejects_mismatch() {
+        let text = "deadbeef  aztui.exe";
+        assert!(super::verify_sha256(b"hello", text).is_err());
     }
 }
