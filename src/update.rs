@@ -117,6 +117,26 @@ fn hex_lower(bytes: &[u8]) -> String {
     s
 }
 
+/// Best-effort removal of any leftover temp file from a previous self-replace
+/// (Windows can't delete a running exe, only rename it). Called once on launch.
+pub fn cleanup_leftover() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    // self-replace leaves a sibling temp; remove common patterns.
+    if let Some(dir) = exe.parent() {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("aztui") && (name.ends_with(".old") || name.contains(".__")) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+}
+
 /* ============================================================================================== */
 /*                                     Throttled check helper                                     */
 /* ============================================================================================== */

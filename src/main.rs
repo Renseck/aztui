@@ -59,6 +59,7 @@ enum SubCommand {
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
+    aztui::update::cleanup_leftover();
 
     // Install panic hook to restore terminal before printing the panic.
     let original_hook = std::panic::take_hook();
