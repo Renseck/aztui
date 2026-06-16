@@ -106,7 +106,9 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
         View::CostExplorer => {
             crate::ui::widgets::cost_explorer::render(frame, area, state, theme);
         }
-        View::RunCommand => {}
+        View::RunCommand => {
+            crate::ui::widgets::run_command::render(frame, area, state, theme);
+        }
         View::Help => render_help(frame, area, theme),
     }
 }
@@ -151,6 +153,14 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         Line::from(vec![
             Span::styled("  Enter           ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Select / confirm", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  F5              ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Run script on VM (run-command view)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab             ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Switch editor/output (run-command view)", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("  Esc             ", theme.surface_style().fg(theme.azure_light)),

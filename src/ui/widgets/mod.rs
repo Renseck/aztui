@@ -3,6 +3,7 @@ pub mod cost_explorer;
 pub mod modal;
 pub mod quick_switch;
 pub mod resource_browser;
+pub mod run_command;
 pub mod search_input;
 pub mod status_bar;
 
