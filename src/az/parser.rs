@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::domain::{CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup};
+use crate::domain::{CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup, RunCommandOutput};
 use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
@@ -46,6 +46,24 @@ struct RawResourceGroup {
     location: String,
     #[serde(default)]
     tags: Option<HashMap<String, String>>,
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+struct RawRunCommandResponse {
+    #[serde(default)]
+    value: Vec<RawRunCommandStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRunCommandStatus {
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    display_status: String,
+    #[serde(default)]
+    message: String,
 }
 
 /* ============================================================================================== */
@@ -233,6 +251,34 @@ pub fn parse_resource_list(json: &str) -> Result<Vec<Resource>, AppError> {
 
     resources.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(resources)
+}
+
+/* ========================================= Run command ======================================== */
+/// Parses the output of `az vm run-command invoke` into a [`RunCommandOutput`].
+///
+/// The response has a `value` array whose entries carry `code`
+/// (`ComponentStatus/StdOut/...` or `.../StdErr/...`), a `displayStatus`, and a
+/// `message`. Success is derived from `displayStatus` containing "succeeded".
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_run_command_output(json: &str) -> Result<RunCommandOutput, AppError> {
+    let raw: RawRunCommandResponse = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("run-command: {}", e)))?;
+
+    let mut out = RunCommandOutput::default();
+    for status in raw.value {
+        if status.code.contains("StdOut") {
+            out.stdout = status.message;
+        } else if status.code.contains("StdErr") {
+            out.stderr = status.message;
+        }
+        if !status.display_status.is_empty() {
+            out.display_status = status.display_status;
+        }
+    }
+    out.succeeded = out.display_status.to_lowercase().contains("succeeded");
+    Ok(out)
 }
 
 /* ============================================ Cost ============================================ */
@@ -434,6 +480,25 @@ mod tests {
         }
     }"#;
 
+    const RUN_COMMAND_JSON: &str = r#"{
+        "value": [
+            {
+                "code": "ComponentStatus/StdOut/succeeded",
+                "displayStatus": "Provisioning succeeded",
+                "level": "Info",
+                "message": "Tuesday, 16 June 2026 10:00:00",
+                "time": null
+            },
+            {
+                "code": "ComponentStatus/StdErr/succeeded",
+                "displayStatus": "Provisioning succeeded",
+                "level": "Info",
+                "message": "",
+                "time": null
+            }
+        ]
+    }"#;
+
     #[test]
     fn parse_account_list_groups_by_tenant() {
         let (tenants, by_tenant) =
@@ -534,5 +599,24 @@ mod tests {
 
         assert_eq!(summary.total, 0.0);
         assert!(summary.breakdown.is_empty());
+    }
+
+    #[test]
+    fn parse_run_command_splits_stdout_stderr() {
+        let out = parse_run_command_output(RUN_COMMAND_JSON).unwrap();
+        assert_eq!(out.stdout, "Tuesday, 16 June 2026 10:00:00");
+        assert_eq!(out.stderr, "");
+        assert!(out.succeeded);
+    }
+
+    #[test]
+    fn parse_run_command_marks_failure_on_stderr() {
+        let json = r#"{"value":[
+            {"code":"ComponentStatus/StdOut/succeeded","displayStatus":"Provisioning failed","message":""},
+            {"code":"ComponentStatus/StdErr/succeeded","displayStatus":"Provisioning failed","message":"boom"}
+        ]}"#;
+        let out = parse_run_command_output(json).unwrap();
+        assert_eq!(out.stderr, "boom");
+        assert!(!out.succeeded);
     }
 }
