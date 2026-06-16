@@ -338,6 +338,31 @@ pub fn filtered_resource_groups(state: &AppState) -> Vec<&ResourceGroup> {
 
 /* ============================================================================================== */
 
+/// A selected VM's coordinates, for opening the run-command view.
+pub struct VmTarget {
+    pub subscription_id: String,
+    pub resource_group: String,
+    pub vm_name: String,
+}
+
+/// Returns the [`VmTarget`] for the right-pane selection if it is a VM, else `None`.
+pub fn selected_vm_target(state: &AppState) -> Option<VmTarget> {
+    let filtered = filtered_resources(state);
+    let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
+    let res = filtered.get(cursor)?;
+    if res.resource_type != "Microsoft.Compute/virtualMachines" {
+        return None;
+    }
+    let subscription_id = state.active_context.as_ref()?.subscription.id.clone();
+    Some(VmTarget {
+        subscription_id,
+        resource_group: res.resource_group.clone(),
+        vm_name: res.name.clone(),
+    })
+}
+
+/* ============================================================================================== */
+
 /// Returns filtered resources based on the search query (when right pane is focused).
 pub fn filtered_resources(state: &AppState) -> Vec<&Resource> {
     let query = if state.resource_browser_focus == Pane::Right && !state.resource_search_query.is_empty() {
