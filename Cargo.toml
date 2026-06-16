@@ -1,6 +1,6 @@
 [package]
 name = "aztui"
-version = "0.1.0"
+version = "1.0.3"
 edition = "2024"
 rust-version = "1.90"
 authors = ["Renseck "]
@@ -22,8 +22,13 @@ crossterm = "0.29.0"
 dirs = "6.0.0"
 keyring = "3.6.3"
 ratatui = "0.30.0"
+reqwest = { version = "0.13.4", features = ["blocking", "rustls"] }
+self-replace = "1.5.0"
+self_update = { version = "0.44.0", features = ["rustls", "compression-flate2", "archive-tar"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
 tokio = { version = "1.51.0", features = ["full"] }
 toml = "1.1.2"
 tui-textarea = "0.7.0"

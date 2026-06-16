@@ -47,18 +47,26 @@ enum SubCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Update aztui to the latest GitHub release
+    Update {
+        /// Only check for an update; do not install it
+        #[arg(long)]
+        check: bool,
+    }
 }
 
 /* ============================================================================================== */
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
+    aztui::update::cleanup_leftover();
 
     // Install panic hook to restore terminal before printing the panic.
-    let _original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |_info| {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stderr(), LeaveAlternateScreen);
+        original_hook(info);
     }));
 
     // Handle subcommands that run headlessly (no TUI).
@@ -70,6 +78,25 @@ async fn main() -> Result<(), AppError> {
                     Err(e) => {
                         eprintln!("Setup failed: {}", e);
                         return Err(e);
+                    }
+                }
+            }
+            SubCommand::Update { check } => {
+                let check = *check;
+                let outcome =
+                    tokio::task::spawn_blocking(move || aztui::update::run_update(check)).await;
+                match outcome {
+                    Ok(Ok(())) => return Ok(()),
+                    Ok(Err(e)) => {
+                        eprintln!("Update failed: {}", e);
+                        return Err(e);
+                    }
+                    Err(join_err) => {
+                        eprintln!("Update failed: {}", join_err);
+                        return Err(AppError::unknown(format!(
+                            "update task panicked: {}",
+                            join_err
+                        )));
                     }
                 }
             }
@@ -175,6 +202,18 @@ async fn main() -> Result<(), AppError> {
             .send(Command::RefreshContextList)
             .await
             .map_err(|e| AppError::unknown(e.to_string()))?;
+    }
+
+    // Background, non-blocking update check (throttled to once per 24h).
+    {
+        let cmd_tx = cmd_tx.clone();
+        tokio::spawn(async move {
+            if let Ok(Some(version)) =
+                tokio::task::spawn_blocking(aztui::update::background_check).await
+            {
+                let _ = cmd_tx.send(Command::NotifyUpdateAvailable(version)).await;
+            }
+        });
     }
     
     let tick_duration = Duration::from_millis(100);

@@ -10,3 +10,4 @@ pub mod providers;
 pub mod security;
 pub mod setup;
 pub mod ui;
+pub mod update;

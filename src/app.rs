@@ -151,6 +151,9 @@ pub struct AppState {
     // Errors
     pub last_error: Option<AppError>,
 
+    // Auto-update check
+    pub update_available: Option<String>,
+
     // Spinner animation frame
     pub spinner_frame: u8,
 
@@ -190,6 +193,7 @@ impl AppState {
             last_interaction: Instant::now(),
             config,
             last_error: None,
+            update_available: None,
             spinner_frame: 0,
             should_quit: false,
         }
@@ -257,6 +261,10 @@ pub async fn dispatch_command(
         /* =========================== Synchronous navigation commands ========================== */
         Command::Quit => {
             state.should_quit = true;
+        }
+
+        Command::NotifyUpdateAvailable(version) => {
+            state.update_available = Some(version);
         }
 
         Command::NavigateTo(view) => {
