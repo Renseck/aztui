@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -14,7 +13,7 @@ use crate::domain::auth::AuthProvider;
 use crate::domain::models::{AzureContext, Subscription, Tenant};
 use crate::errors::{AppError, ErrorKind};
 
-const TENANTS_CACHE_KIND: &str = "tenants";
+const _TENANTS_CACHE_KIND: &str = "tenants";
 const CONTEXT_LIST_CACHE_KIND: &str = "context_list";
 
 /* ============================================================================================== */

@@ -110,7 +110,7 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
 }
 
 /* ============================================================================================== */
-fn render_phase_stub(
+fn _render_phase_stub(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     name: &str,

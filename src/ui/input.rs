@@ -306,7 +306,7 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
 fn handle_quick_switch_input(
     key: KeyEvent,
     query: &str,
-    filtered: &[crate::domain::models::AzureContext],
+    _filtered: &[crate::domain::models::AzureContext],
     cursor: usize,
     state: &AppState,
 ) -> Option<Command> {

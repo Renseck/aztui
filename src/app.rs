@@ -3,10 +3,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc};
 use ratatui::widgets::ListState;
 
-use crate::cache::CacheStore;
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::auth::{AuthProvider};
@@ -261,7 +260,7 @@ pub async fn dispatch_command(
         }
 
         Command::NavigateTo(view) => {
-            let prev_view = state.active_view.clone();
+            let _prev_view = state.active_view.clone();
             state.active_view = view.clone();
             state.search_query.clear();
             state.search_focused = false;

@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Paragraph};
 use ratatui::Frame;
 
 use crate::app::AppState;

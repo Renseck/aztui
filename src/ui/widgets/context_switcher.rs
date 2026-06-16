@@ -1,11 +1,10 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::app::AppState;
-use crate::domain::models::{Subscription, SubscriptionState, Tenant};
+use crate::domain::models::{Subscription, Tenant};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::SPINNER_CHARS;
 
@@ -247,9 +246,9 @@ fn render_item<'a>(
         }
 
         ContextItem::SubscriptionRow {
-            tenant,
+            tenant: _,
             subscription: sub,
-            sub_index,
+            sub_index: _,
         } => {
             let is_selected = flat_idx == cursor_flat;
             let is_active = state

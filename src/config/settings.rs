@@ -214,7 +214,7 @@ mod duration_secs {
 
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(d: Duration, s: S) -> Result<S::Ok, S::Error> {
+    pub fn _serialize<S: Serializer>(d: Duration, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_u64(d.as_secs())
     }
 

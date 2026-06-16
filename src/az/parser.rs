@@ -16,6 +16,7 @@ struct RawAccount {
     id: String,
     name: String,
     tenant_id: String,
+    #[allow(dead_code)]
     home_tenant_id: Option<String>,
     state: String,
     #[serde(default)]
@@ -56,6 +57,7 @@ struct RawCostQueryResponse {
     #[serde(default)]
     rows: Vec<Vec<serde_json::Value>>,
     #[serde(default)]
+    #[allow(dead_code)]
     columns: Vec<RawCostColumn>,
 }
 
@@ -65,14 +67,18 @@ struct RawCostQueryProperties {
     #[serde(default)]
     rows: Vec<Vec<serde_json::Value>>,
     #[serde(default)]
+    #[allow(dead_code)]
     columns: Vec<RawCostColumn>,
+    #[allow(dead_code)]
     next_link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawCostColumn {
+    #[allow(dead_code)]
     name: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     column_type: String,
 }
 

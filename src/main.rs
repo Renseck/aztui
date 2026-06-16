@@ -12,7 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::{mpsc, RwLock};
 
-use aztui::app::{dispatch_command, handle_event, AppState, Modal, PasswordMode};
+use aztui::app::{dispatch_command, handle_event, AppState, PasswordMode};
 use aztui::az::SubprocessCliExecutor;
 use aztui::cache::{DiskCache, DiskCacheData, CacheStore};
 use aztui::command::Command;
@@ -55,8 +55,8 @@ async fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
 
     // Install panic hook to restore terminal before printing the panic.
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    let _original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |_info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stderr(), LeaveAlternateScreen);
     }));
@@ -97,7 +97,7 @@ async fn main() -> Result<(), AppError> {
     }
 
     // Try OS keyring unlock before starting the TUI.
-    let keyring_unlocked = security.try_keyring_unlock().unwrap_or(false);
+    let _keyring_unlocked = security.try_keyring_unlock().unwrap_or(false);
 
     // Disk cache
     let disk_cache = DiskCache::new(&config.general.data_dir);
