@@ -35,6 +35,7 @@ const DEFAULT_CONFIG_TOML: &str = r#"# aztui configuration
 # mouse_enabled = true
 # status_bar_position = "bottom"   # "top" or "bottom"
 # show_operation_timing = true     # Show elapsed time for operations
+# scroll_off = 3                   # Rows kept above/below cursor before scrolling (0 = edge)
 
 [cli]
 # az_path = ""                     # Path to az binary (auto-detect if empty)

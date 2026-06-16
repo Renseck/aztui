@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::{mpsc, RwLock};
+use ratatui::widgets::ListState;
 
 use crate::cache::CacheStore;
 use crate::command::Command;
@@ -14,6 +16,7 @@ use crate::domain::resources::ResourceProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
 use crate::security::{SecurityManager};
+
 
 /* ============================================================================================== */
 /*                                        Supporting types                                        */
@@ -76,6 +79,20 @@ pub enum Pane {
 
 /* ============================================================================================== */
 
+/// Persistent scroll offsets for the scrolling list views. Held in `RefCell` so
+/// the render functions (which take `&AppState`) can update the offset each
+/// frame while the cursor index in `AppState` remains the source of truth for
+/// selection. Without persisting `ListState` across frames, Ratatui resets the
+/// scroll offset to 0 every frame and pins the selection to the viewport edge.
+#[derive(Debug, Default)]
+pub struct ScrollStates {
+    pub context: RefCell<ListState>,
+    pub resource_groups: RefCell<ListState>,
+    pub resources: RefCell<ListState>,
+}
+
+/* ============================================================================================== */
+
 /// An in-flight async operation. The [`AbortHandle`] allows cancellation.
 #[derive(Debug, Clone)]
 pub struct PendingOperation {
@@ -105,6 +122,7 @@ pub struct AppState {
     pub search_focused: bool,
     pub modal: Option<Modal>,
     pub context_list_cursor: usize,
+    pub scroll: ScrollStates,
 
     // Resource browser (Phase 3)
     pub resource_groups: Vec<ResourceGroup>,
@@ -159,6 +177,7 @@ impl AppState {
             resource_groups: Vec::new(),
             resources: Vec::new(),
             resource_group_cursor: 0,
+            scroll: ScrollStates::default(),
             resource_cursor: 0,
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
@@ -368,7 +387,8 @@ pub async fn dispatch_command(
                     state.cost_selected_index += 1;
                 }
             } else {
-                state.context_list_cursor += 1;
+                let total = crate::ui::widgets::context_switcher::total_selectable(state);
+                state.context_list_cursor = clamp_increment(state.context_list_cursor, total);
             }
         }
 
@@ -910,10 +930,48 @@ pub fn handle_event(state: &mut AppState, event: &Event) {
 /*                                         Private helpers                                        */
 /* ============================================================================================== */
 
+/// Returns the next cursor index, clamped to the last valid index of a list of
+/// length `len`. Returns 0 for an empty list. Centralizes the "don't run past
+/// the end" rule so every navigable list behaves identically.
+pub(crate) fn clamp_increment(cursor: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (cursor + 1).min(len - 1)
+    }
+}
+
 fn abort_slot(state: &mut AppState, slot_id: OperationId) {
     if let Some(op) = state.pending_operations.remove(&slot_id) {
         if let Some(handle) = op.abort_handle {
             handle.abort();
         }
+    }
+}
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod nav_tests {
+    use super::clamp_increment;
+
+    #[test]
+    fn clamp_increment_advances_within_bounds() {
+        assert_eq!(clamp_increment(0, 5), 1);
+        assert_eq!(clamp_increment(3, 5), 4);
+    }
+
+    #[test]
+    fn clamp_increment_saturates_at_last_index() {
+        assert_eq!(clamp_increment(4, 5), 4);
+        assert_eq!(clamp_increment(99, 5), 4);
+    }
+
+    #[test]
+    fn clamp_increment_handles_empty_list() {
+        assert_eq!(clamp_increment(0, 0), 0);
+        assert_eq!(clamp_increment(7, 0), 0);
     }
 }

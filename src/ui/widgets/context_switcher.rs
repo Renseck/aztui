@@ -75,12 +75,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         .map(|(idx, item)| render_item(item, idx, flat_cursor, state, theme, max_name_len))
         .collect();
 
-    let mut list_state = ListState::default();
-    list_state.select(Some(flat_cursor));
-
     let list = List::new(list_items)
         .style(theme.surface_style())
-        .highlight_style(theme.selected_style());
+        .highlight_style(theme.selected_style())
+        .scroll_padding(state.config.ui.scroll_off);
+
+    let mut list_state = state.scroll.context.borrow_mut();
+    list_state.select(Some(flat_cursor));
 
     frame.render_widget(block, layout[1]);
     frame.render_stateful_widget(list, inner, &mut list_state);
