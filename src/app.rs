@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::{mpsc, RwLock};
+use ratatui::widgets::ListState;
 
 use crate::cache::CacheStore;
 use crate::command::Command;
@@ -14,6 +16,7 @@ use crate::domain::resources::ResourceProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
 use crate::security::{SecurityManager};
+
 
 /* ============================================================================================== */
 /*                                        Supporting types                                        */
@@ -76,6 +79,20 @@ pub enum Pane {
 
 /* ============================================================================================== */
 
+/// Persistent scroll offsets for the scrolling list views. Held in `RefCell` so
+/// the render functions (which take `&AppState`) can update the offset each
+/// frame while the cursor index in `AppState` remains the source of truth for
+/// selection. Without persisting `ListState` across frames, Ratatui resets the
+/// scroll offset to 0 every frame and pins the selection to the viewport edge.
+#[derive(Debug, Default)]
+pub struct ScrollStates {
+    pub context: RefCell<ListState>,
+    pub resource_groups: RefCell<ListState>,
+    pub resources: RefCell<ListState>,
+}
+
+/* ============================================================================================== */
+
 /// An in-flight async operation. The [`AbortHandle`] allows cancellation.
 #[derive(Debug, Clone)]
 pub struct PendingOperation {
@@ -105,6 +122,7 @@ pub struct AppState {
     pub search_focused: bool,
     pub modal: Option<Modal>,
     pub context_list_cursor: usize,
+    pub scroll: ScrollStates,
 
     // Resource browser (Phase 3)
     pub resource_groups: Vec<ResourceGroup>,
@@ -159,6 +177,7 @@ impl AppState {
             resource_groups: Vec::new(),
             resources: Vec::new(),
             resource_group_cursor: 0,
+            scroll: ScrollStates::default(),
             resource_cursor: 0,
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
