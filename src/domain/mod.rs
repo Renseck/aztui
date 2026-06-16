@@ -5,7 +5,7 @@ pub mod resources;
 
 pub use models::{
     AzureContext, CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup,
-    Subscription, SubscriptionState, Tenant,
+    RunCommandOutput, Subscription, SubscriptionState, Tenant,
 };
 pub use auth::AuthProvider;
 pub use resources::ResourceProvider;

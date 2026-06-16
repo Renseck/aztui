@@ -76,6 +76,19 @@ pub struct Resource {
 
 /* ============================================================================================== */
 
+/// Result of an `az vm run-command invoke` call. Run-command returns stdout and
+/// stderr as separate status entries; the script's exit code is not reliably
+/// surfaced, so `succeeded` is derived from the provisioning `display_status`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunCommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub display_status: String,
+    pub succeeded: bool,
+}
+
+/* ============================================================================================== */
+
 /// Represents the user's current working context in Azure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AzureContext {
