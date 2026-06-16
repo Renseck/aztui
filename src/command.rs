@@ -68,6 +68,27 @@ pub enum Command {
 
     FetchCostSummary(CostPeriod),
 
+    /* ===================================== VM run-command ===================================== */
+
+    /// Open the run-command view for a specific VM.
+    OpenRunCommand {
+        subscription_id: String,
+        resource_group: String,
+        vm_name: String,
+    },
+
+    /// Forward a key event to the script editor.
+    ScriptInput(crossterm::event::KeyEvent),
+
+    /// Toggle focus between the editor and the output pane.
+    ToggleRunPane,
+
+    /// Scroll the output pane by a signed delta (rows).
+    ScrollRunOutput(i16),
+
+    /// Execute the current script on the selected VM.
+    RunVmCommand,
+
     /* ======================================== Security ======================================== */
 
     Lock,
@@ -125,4 +146,8 @@ pub enum Command {
     /// Delivered by async tasks when cost summary fetch completes.
     #[doc(hidden)]
     CostSummaryResult(Result<crate::domain::models::CostSummary, AppError>),
+
+    /// Delivered when a VM run-command invocation completes.
+    #[doc(hidden)]
+    VmCommandResult(Result<crate::domain::models::RunCommandOutput, AppError>),
 }
