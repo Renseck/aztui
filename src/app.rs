@@ -5,13 +5,15 @@ use std::time::Instant;
 
 use tokio::sync::{mpsc};
 use ratatui::widgets::ListState;
+use tui_textarea::TextArea;
 
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::auth::{AuthProvider};
 use crate::domain::cost::CostProvider;
-use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant};
+use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
 use crate::domain::resources::ResourceProvider;
+use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
 use crate::security::{SecurityManager};
@@ -30,6 +32,7 @@ pub enum View {
     ContextSwitcher,
     ResourceBrowser,
     CostExplorer,
+    RunCommand,
     Help,
 }
 
@@ -74,6 +77,64 @@ pub enum PasswordMode {
 pub enum Pane {
     Left,
     Right
+}
+
+/* ============================================================================================== */
+
+/// Which pane of the run-command view has focus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunPane {
+    Editor,
+    Output,
+}
+
+/* ============================================================================================== */
+
+/// Lifecycle of a run-command invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunStatus {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+}
+
+/* ============================================================================================== */
+
+/// State for the VM run-command view: which VM, the script being edited, and the
+/// most recent execution result.
+#[derive(Debug)]
+pub struct RunCommandSession {
+    pub subscription_id: String,
+    pub resource_group: String,
+    pub vm_name: String,
+    pub editor: TextArea<'static>,
+    pub status: RunStatus,
+    pub output: Option<RunCommandOutput>,
+    pub output_scroll: u16,
+    pub focus: RunPane,
+}
+
+impl RunCommandSession {
+    pub fn new(subscription_id: String, resource_group: String, vm_name: String) -> Self {
+        let mut editor = TextArea::default();
+        editor.set_placeholder_text("Enter a PowerShell script, then press F5 to run");
+        Self {
+            subscription_id,
+            resource_group,
+            vm_name,
+            editor,
+            status: RunStatus::Idle,
+            output: None,
+            output_scroll: 0,
+            focus: RunPane::Editor,
+        }
+    }
+
+    /// The full script text, lines joined with newlines.
+    pub fn script(&self) -> String {
+        self.editor.lines().join("\n")
+    }
 }
 
 /* ============================================================================================== */
@@ -135,6 +196,9 @@ pub struct AppState {
     pub cost_summary: Option<CostSummary>,
     pub cost_period: CostPeriod,
     pub cost_selected_index: usize,
+
+    // Run Command
+    pub run_command: Option<RunCommandSession>,
     
     // Async operations
     pub pending_operations: HashMap<OperationId, PendingOperation>,
@@ -186,6 +250,7 @@ impl AppState {
             cost_summary: None,
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
+            run_command: None,
             pending_operations: HashMap::new(),
             next_operation_id: 0,
             locked,
