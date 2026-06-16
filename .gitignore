@@ -32,3 +32,6 @@ flamegraph.svg
 *.profdata
 coverage/
 lcov.info
+
+CLAUDE.md
+docs/superpowers/
