@@ -31,6 +31,58 @@ fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
 }
 
 /* ============================================================================================== */
+/*                                       Release metadata                                         */
+/* ============================================================================================== */
+
+const REPO_OWNER: &str = "Renseck";
+const REPO_NAME: &str = "aztui";
+const BIN_ASSET: &str = "aztui.exe";
+const SHA_ASSET: &str = "aztui.exe.sha256";
+
+/// Metadata for the latest GitHub release relevant to updating.
+#[derive(Debug, Clone)]
+pub struct ReleaseInfo {
+    pub version: String,
+    pub bin_url: String,
+    pub sha256_url: Option<String>,
+}
+
+/// Fetches the latest release from GitHub. Synchronous (blocking HTTP); call via
+/// `spawn_blocking` from async contexts.
+pub fn fetch_latest_release() -> Result<ReleaseInfo, AppError> {
+    let releases = self_update::backends::github::ReleaseList::configure()
+        .repo_owner(REPO_OWNER)
+        .repo_name(REPO_NAME)
+        .build()
+        .map_err(|e| AppError::unknown(format!("update: configure release list: {}", e)))?
+        .fetch()
+        .map_err(|e| AppError::unknown(format!("update: fetch releases: {}", e)))?;
+
+    let latest = releases
+        .first()
+        .ok_or_else(|| AppError::unknown("update: no releases found"))?;
+
+    let bin_url = latest
+        .assets
+        .iter()
+        .find(|a| a.name == BIN_ASSET)
+        .map(|a| a.download_url.clone())
+        .ok_or_else(|| AppError::unknown(format!("update: release has no {} asset", BIN_ASSET)))?;
+
+    let sha256_url = latest
+        .assets
+        .iter()
+        .find(|a| a.name == SHA_ASSET)
+        .map(|a| a.download_url.clone());
+
+    Ok(ReleaseInfo {
+        version: latest.version.clone(),
+        bin_url,
+        sha256_url,
+    })
+}
+
+/* ============================================================================================== */
 /*                                              Tests                                             */
 /* ============================================================================================== */
 
