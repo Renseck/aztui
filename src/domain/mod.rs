@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cost;
 pub mod models;
 pub mod resources;
+pub mod vm;
 
 pub use models::{
     AzureContext, CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup,
@@ -10,3 +11,4 @@ pub use models::{
 pub use auth::AuthProvider;
 pub use resources::ResourceProvider;
 pub use cost::CostProvider;
+pub use vm::VmProvider;
