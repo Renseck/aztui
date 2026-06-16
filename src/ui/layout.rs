@@ -12,7 +12,7 @@ use crate::ui::widgets::{context_switcher, modal, quick_switch, status_bar};
 /// Top-level render function. Draws the complete TUI frame from `state`.
 ///
 /// Layout:
-/// ```
+/// ```text
 /// ┌──────────────────────────────────────────┐
 /// │  Title bar  (row 0)                      │
 /// ├──────────────────────────────────────────┤
