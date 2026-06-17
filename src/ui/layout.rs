@@ -143,10 +143,7 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
     let lines = vec![
         Line::from(""),
         Line::from(vec![Span::styled("  Navigation", theme.heading_style())]),
-        Line::from(vec![Span::styled(
-            "  ─────────────────────────────────────────",
-            theme.hint_style(),
-        )]),
+        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
         Line::from(vec![
             Span::styled("  ↑/↓  or  j/k   ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Navigate list", theme.surface_style().fg(theme.text)),
@@ -157,38 +154,19 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         ]),
         Line::from(vec![
             Span::styled("  Enter           ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Select / confirm", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  F5              ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Run script on VM (run-command view)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Tab             ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Switch editor/output (run-command view)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  4               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Activity log (subscription)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  a               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Activity log for selected resource/RG", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  f / s           ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Failed-only / broaden scope (activity log)", theme.surface_style().fg(theme.text)),
+            Span::styled("Select / confirm / open detail", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("  Esc             ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Clear search / close modal", theme.surface_style().fg(theme.text)),
+            Span::styled("Clear search / close modal / back", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled("  Actions", theme.heading_style())]),
-        Line::from(vec![Span::styled(
-            "  ─────────────────────────────────────────",
-            theme.hint_style(),
-        )]),
+        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
+        Line::from(vec![
+            Span::styled("  1 / 2 / 3 / 4   ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Context / Resources / Cost / Activity log", theme.surface_style().fg(theme.text)),
+        ]),
         Line::from(vec![
             Span::styled("  /               ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Focus search", theme.surface_style().fg(theme.text)),
@@ -203,26 +181,27 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         ]),
         Line::from(vec![
             Span::styled("  [ / ]  or  h/l  ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Period navigation (cost explorer)", theme.surface_style().fg(theme.text)),
+            Span::styled("Period / window navigation (cost & activity)", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("  1               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Context switcher", theme.surface_style().fg(theme.text)),
-        ]),
-         Line::from(vec![
-            Span::styled("  2               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Resource browser", theme.surface_style().fg(theme.text)),
+            Span::styled("  a               ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Activity log for selected resource/RG", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
-            Span::styled("  3               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Cost explorer", theme.surface_style().fg(theme.text)),
+            Span::styled("  f / s           ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Failed-only / broaden scope (activity log)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  F5              ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Run script on VM (run-command view)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab             ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Switch editor/output (run-command view)", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled("  System", theme.heading_style())]),
-        Line::from(vec![Span::styled(
-            "  ─────────────────────────────────────────",
-            theme.hint_style(),
-        )]),
+        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
         Line::from(vec![
             Span::styled("  ?               ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Toggle this help screen", theme.surface_style().fg(theme.text)),

@@ -217,7 +217,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
         }
 
         // Help
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
 
         // View shortcuts
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
@@ -293,7 +293,7 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
         }
 
         // Help
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
 
         // View shortcuts
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
@@ -400,7 +400,7 @@ fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command>
             })))
         }
 
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
