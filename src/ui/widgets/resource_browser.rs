@@ -292,9 +292,15 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
                 theme.surface_style().fg(theme.text)
             };
 
+            let type_style = if is_vm(&res.resource_type) {
+                theme.vm_type_style()
+            } else {
+                theme.surface_style().fg(theme.azure_light)
+            };
+
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{}{}", prefix, res.name), name_style),
-                Span::styled(format!("  {}", abbrev_type), theme.surface_style().fg(theme.azure_light)),
+                Span::styled(format!("  {}", abbrev_type), type_style),
                 Span::styled(format!("  {}", location), theme.surface_style().fg(theme.subtle)),
             ]))
         })
