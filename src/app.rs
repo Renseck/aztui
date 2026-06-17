@@ -10,9 +10,10 @@ use tui_textarea::{Input, Key, TextArea};
 
 use crate::command::Command;
 use crate::config::AppConfig;
+use crate::domain::activity::{ActivityLogProvider, ActivityScope, ActivityWindow};
 use crate::domain::auth::{AuthProvider};
 use crate::domain::cost::CostProvider;
-use crate::domain::models::{AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
+use crate::domain::models::{ActivityLogEntry, AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
 use crate::domain::resources::ResourceProvider;
 use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
@@ -34,6 +35,7 @@ pub enum View {
     ResourceBrowser,
     CostExplorer,
     RunCommand,
+    ActivityLog,
     Help,
 }
 
@@ -140,6 +142,35 @@ impl RunCommandSession {
 
 /* ============================================================================================== */
 
+/// State for the Activity Log view: what we're looking at, the loaded entries,
+/// and the client-side filter controls.
+#[derive(Debug)]
+pub struct ActivityLogState {
+    pub scope: ActivityScope,
+    pub window: ActivityWindow,
+    pub entries: Vec<ActivityLogEntry>,
+    pub cursor: usize,
+    pub failed_only: bool,
+    pub search: String,
+    pub search_focused: bool,
+}
+
+impl ActivityLogState {
+    pub fn new(scope: ActivityScope) -> Self {
+        Self {
+            scope,
+            window: ActivityWindow::Day,
+            entries: Vec::new(),
+            cursor: 0,
+            failed_only: false,
+            search: String::new(),
+            search_focused: false,
+        }
+    }
+}
+
+/* ============================================================================================== */
+
 /// Persistent scroll offsets for the scrolling list views. Held in `RefCell` so
 /// the render functions (which take `&AppState`) can update the offset each
 /// frame while the cursor index in `AppState` remains the source of truth for
@@ -200,6 +231,9 @@ pub struct AppState {
 
     // Run Command
     pub run_command: Option<RunCommandSession>,
+
+    // Activity Log Viewer
+    pub activity: Option<ActivityLogState>,
     
     // Async operations
     pub pending_operations: HashMap<OperationId, PendingOperation>,
@@ -252,6 +286,7 @@ impl AppState {
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
             run_command: None,
+            activity: None,
             pending_operations: HashMap::new(),
             next_operation_id: 0,
             locked,

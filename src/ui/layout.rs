@@ -56,6 +56,7 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppS
         View::ResourceBrowser => " > Resources",
         View::CostExplorer => " > Cost Explorer",
         View::RunCommand => " > Run Command",
+        View::ActivityLog => " > Activity Log",
         View::Help => " > Help",
     };
 
@@ -109,6 +110,7 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
         View::RunCommand => {
             crate::ui::widgets::run_command::render(frame, area, state, theme);
         }
+        View::ActivityLog => {}
         View::Help => render_help(frame, area, theme),
     }
 }
