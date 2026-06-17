@@ -173,6 +173,45 @@ pub fn vm_run_command_powershell(
 }
 
 /* ============================================================================================== */
+/*                                          Activity log                                          */
+/* ============================================================================================== */
+
+use crate::domain::activity::{ActivityScope, ActivityWindow};
+
+/// Returns args for `az monitor activity-log list` for the given scope and
+/// window. The subscription is always passed explicitly; resource and
+/// resource-group scopes add the matching narrowing flag.
+pub fn activity_log_list(scope: &ActivityScope, window: ActivityWindow) -> Vec<String> {
+    let mut args = vec![
+        "monitor".to_string(),
+        "activity-log".to_string(),
+        "list".to_string(),
+        "--subscription".to_string(),
+        scope.subscription_id().to_string(),
+        "--offset".to_string(),
+        window.offset().to_string(),
+        "--max-events".to_string(),
+        "200".to_string(),
+    ];
+
+    match scope {
+        ActivityScope::Subscription { .. } => {}
+        ActivityScope::ResourceGroup { resource_group, .. } => {
+            args.push("--resource-group".to_string());
+            args.push(resource_group.clone());
+        }
+        ActivityScope::Resource { resource_id, .. } => {
+            args.push("--resource-id".to_string());
+            args.push(resource_id.clone());
+        }
+    }
+
+    args.push("--output".to_string());
+    args.push("json".to_string());
+    args
+}
+
+/* ============================================================================================== */
 /*                                              Tests                                             */
 /* ============================================================================================== */
 
@@ -195,5 +234,51 @@ mod tests {
                 "--output", "json",
             ]
         );
+    }
+
+    #[test]
+    fn activity_log_subscription_scope() {
+        use crate::domain::activity::{ActivityScope, ActivityWindow};
+        let scope = ActivityScope::Subscription { subscription_id: "sub-1".into() };
+        let args = activity_log_list(&scope, ActivityWindow::Day);
+        assert_eq!(
+            args,
+            vec![
+                "monitor", "activity-log", "list",
+                "--subscription", "sub-1",
+                "--offset", "24h",
+                "--max-events", "200",
+                "--output", "json",
+            ]
+        );
+    }
+
+    #[test]
+    fn activity_log_resource_scope_adds_resource_id() {
+        use crate::domain::activity::{ActivityScope, ActivityWindow};
+        let scope = ActivityScope::Resource {
+            subscription_id: "sub-1".into(),
+            resource_group: "rg".into(),
+            resource_id: "/subscriptions/sub-1/.../web-01".into(),
+            resource_name: "web-01".into(),
+        };
+        let args = activity_log_list(&scope, ActivityWindow::Week);
+        assert!(args.contains(&"--resource-id".to_string()));
+        assert!(args.contains(&"/subscriptions/sub-1/.../web-01".to_string()));
+        assert!(args.contains(&"7d".to_string()));
+        assert!(!args.contains(&"--resource-group".to_string()));
+    }
+
+    #[test]
+    fn activity_log_rg_scope_adds_resource_group() {
+        use crate::domain::activity::{ActivityScope, ActivityWindow};
+        let scope = ActivityScope::ResourceGroup {
+            subscription_id: "sub-1".into(),
+            resource_group: "rg-web".into(),
+        };
+        let args = activity_log_list(&scope, ActivityWindow::Day);
+        assert!(args.contains(&"--resource-group".to_string()));
+        assert!(args.contains(&"rg-web".to_string()));
+        assert!(!args.contains(&"--resource-id".to_string()));
     }
 }
