@@ -109,16 +109,44 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         return;
     }
 
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(65),
+            Constraint::Length(1), // search bar
+            Constraint::Min(1),    // panes
+            Constraint::Length(1), // hint footer
         ])
         .split(area);
 
+    crate::ui::widgets::search_input::render(
+        frame,
+        outer[0],
+        &state.resource_search_query,
+        state.search_focused,
+        theme,
+    );
+
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(outer[1]);                       // panes now in outer[1]
+
     render_left_pane(frame, panes[0], state, theme);
     render_right_pane(frame, panes[1], state, theme);
+
+    crate::ui::widgets::hint_bar::render(
+        frame,
+        outer[2],
+        &[
+            ("Tab", "panes"),
+            ("/", "search"),
+            ("↵", "run (VM)"),
+            ("a", "activity"),
+            ("r", "refresh"),
+            ("Esc", "back"),
+        ],
+        theme,
+    );
 }
 
 /* ============================================================================================== */

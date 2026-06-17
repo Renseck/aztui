@@ -24,9 +24,12 @@ pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         return handle_modal_input(key, modal, state);
     }
 
-    // Search mode: printable chars feed the search query.
+    // Search mode: route to the active view's search handler.
     if state.search_focused {
-        return handle_search_input(key, state);
+        return match state.active_view {
+            View::ResourceBrowser => handle_resource_search_input(key, state),
+            _ => handle_search_input(key, state),
+        };
     }
 
     // Normal navigation.
@@ -94,9 +97,18 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         // Help
         (KeyModifiers::SHIFT, KeyCode::Char('?')) => {
             if state.active_view == View::Help {
-                Some(Command::NavigateTo(View::ContextSwitcher))
+                Some(Command::NavigateTo(state.previous_view.clone()))
             } else {
                 Some(Command::NavigateTo(View::Help))
+            }
+        }
+
+        // Esc closes the help screen back to where you were.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if state.active_view == View::Help {
+                Some(Command::NavigateTo(state.previous_view.clone()))
+            } else {
+                None
             }
         }
 
@@ -217,7 +229,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
         }
 
         // Help
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
 
         // View shortcuts
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
@@ -293,7 +305,7 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
         }
 
         // Help
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
 
         // View shortcuts
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
@@ -400,7 +412,7 @@ fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command>
             })))
         }
 
-        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),

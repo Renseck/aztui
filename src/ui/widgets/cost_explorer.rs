@@ -40,11 +40,23 @@ fn render_summary(
         .constraints([
             Constraint::Length(4), // header (subscription, period, total)
             Constraint::Min(1),    // breakdown table
+            Constraint::Length(1), // hint footer
         ])
         .split(area);
 
     render_header(frame, layout[0], state, summary, theme);
     render_breakdown(frame, layout[1], state, summary, theme);
+
+    crate::ui::widgets::hint_bar::render(
+        frame,
+        layout[2],
+        &[
+            ("[/]", "period"),
+            ("r", "refresh"),
+            ("Esc", "back"),
+        ],
+        theme,
+    );
 }
 
 /* ============================================================================================== */
