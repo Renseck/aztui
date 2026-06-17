@@ -74,6 +74,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         .constraints([
             Constraint::Length(1), // search bar
             Constraint::Min(1),    // list
+            Constraint::Length(1), // hint footer
         ])
         .split(area);
 
@@ -82,6 +83,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         layout[0],
         &activity.search,
         activity.search_focused,
+        theme,
+    );
+
+    crate::ui::widgets::hint_bar::render(
+        frame,
+        layout[2],
+        &[
+            ("[/]", "window"),
+            ("s", "scope"),
+            ("f", "failed-only"),
+            ("/", "search"),
+            ("↵", "detail"),
+            ("r", "refresh"),
+            ("Esc", "back"),
+        ],
         theme,
     );
 
