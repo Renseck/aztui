@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
             Modal::ErrorDetail(_) => modal::render_error_detail(frame, state, theme),
             Modal::Confirm { .. } => modal::render_confirm(frame, state, theme),
             Modal::PasswordPrompt { .. } => modal::render_password_prompt(frame, state, theme),
-            Modal::ActivityDetail {.. } => {},
+            Modal::ActivityDetail(_) => modal::render_activity_detail(frame, state, theme),
         }
     }
 }
@@ -111,7 +111,9 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
         View::RunCommand => {
             crate::ui::widgets::run_command::render(frame, area, state, theme);
         }
-        View::ActivityLog => {}
+        View::ActivityLog => {
+            crate::ui::widgets::activity_log::render(frame, area, state, theme);
+        }
         View::Help => render_help(frame, area, theme),
     }
 }
@@ -164,6 +166,18 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         Line::from(vec![
             Span::styled("  Tab             ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Switch editor/output (run-command view)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  4               ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Activity log (subscription)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  a               ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Activity log for selected resource/RG", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  f / s           ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Failed-only / broaden scope (activity log)", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("  Esc             ", theme.surface_style().fg(theme.azure_light)),
