@@ -109,16 +109,38 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         return;
     }
 
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),    // panes
+            Constraint::Length(1), // hint footer
+        ])
+        .split(area);
+
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(35),
             Constraint::Percentage(65),
         ])
-        .split(area);
+        .split(outer[0]);
 
     render_left_pane(frame, panes[0], state, theme);
     render_right_pane(frame, panes[1], state, theme);
+
+    crate::ui::widgets::hint_bar::render(
+        frame,
+        outer[1],
+        &[
+            ("Tab", "panes"),
+            ("/", "search"),
+            ("↵", "run (VM)"),
+            ("a", "activity"),
+            ("r", "refresh"),
+            ("Esc", "back"),
+        ],
+        theme,
+    );
 }
 
 /* ============================================================================================== */
