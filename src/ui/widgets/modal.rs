@@ -220,6 +220,57 @@ pub fn render_error_detail(frame: &mut Frame, state: &AppState, theme: &Theme) {
 }
 
 /* ============================================================================================== */
+/// Renders the activity-log entry detail modal.
+pub fn render_activity_detail(frame: &mut ratatui::Frame, state: &crate::app::AppState, theme: &crate::ui::theme::Theme) {
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+
+    let entry = match &state.modal {
+        Some(crate::app::Modal::ActivityDetail(e)) => e,
+        _ => return,
+    };
+
+    let inner = render_modal_frame(
+        frame,
+        "Activity detail",
+        Some("Esc: close"),
+        ModalPosition::Center,
+        80,
+        16,
+        theme,
+        theme.modal_border_style(),
+    );
+
+    let mut lines = vec![
+        kv("Operation", &entry.operation, theme),
+        kv("Time", &entry.timestamp, theme),
+        kv("Status", &entry.status, theme),
+        kv("Level", &entry.level, theme),
+        kv("Caller", entry.caller.as_deref().unwrap_or("—"), theme),
+        kv("Resource", &entry.resource_name, theme),
+        kv("Correlation", entry.correlation_id.as_deref().unwrap_or("—"), theme),
+        Line::from(""),
+    ];
+    if let Some(detail) = &entry.detail {
+        lines.push(Line::from(Span::styled("Detail:", theme.heading_style())));
+        for l in detail.lines() {
+            lines.push(Line::from(Span::styled(l.to_string(), theme.surface_style().fg(theme.text))));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines).style(theme.surface_style()), inner);
+}
+
+/// A `key: value` line for the detail modal.
+fn kv<'a>(key: &'a str, value: &'a str, theme: &crate::ui::theme::Theme) -> ratatui::text::Line<'a> {
+    use ratatui::text::{Line, Span};
+    Line::from(vec![
+        Span::styled(format!("{:<12} ", key), theme.hint_style()),
+        Span::styled(value.to_string(), theme.surface_style().fg(theme.text)),
+    ])
+}
+
+/* ============================================================================================== */
 /// Renders the generic confirm dialog.
 pub fn render_confirm(frame: &mut Frame, state: &AppState, theme: &Theme) {
     let (message, _on_confirm) = match &state.modal {
