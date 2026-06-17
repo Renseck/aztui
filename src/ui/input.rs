@@ -24,9 +24,12 @@ pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         return handle_modal_input(key, modal, state);
     }
 
-    // Search mode: printable chars feed the search query.
+    // Search mode: route to the active view's search handler.
     if state.search_focused {
-        return handle_search_input(key, state);
+        return match state.active_view {
+            View::ResourceBrowser => handle_resource_search_input(key, state),
+            _ => handle_search_input(key, state),
+        };
     }
 
     // Normal navigation.
