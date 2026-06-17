@@ -1,12 +1,14 @@
+pub mod activity;
 pub mod auth;
 pub mod cost;
 pub mod models;
 pub mod resources;
 pub mod vm;
 
+pub use activity::{ActivityLogProvider, ActivityScope, ActivityWindow};
 pub use models::{
-    AzureContext, CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup,
-    RunCommandOutput, Subscription, SubscriptionState, Tenant,
+    ActivityLogEntry, AzureContext, CostLineItem, CostPeriod, CostScope, CostSummary, Resource,
+    ResourceGroup, RunCommandOutput, Subscription, SubscriptionState, Tenant,
 };
 pub use auth::AuthProvider;
 pub use resources::ResourceProvider;

@@ -367,6 +367,34 @@ pub fn filtered_resource_groups(state: &AppState) -> Vec<&ResourceGroup> {
         .collect()
 }
 
+/// Builds the [`ActivityScope`] for the current resource-browser selection:
+/// the focused resource (right pane) or resource group (left pane). Returns
+/// `None` if there is no active subscription or no selection.
+pub fn activity_scope_for_selection(state: &AppState) -> Option<crate::domain::activity::ActivityScope> {
+    use crate::app::Pane;
+    use crate::domain::activity::ActivityScope;
+
+    let sub = state.active_context.as_ref()?.subscription.id.clone();
+
+    match state.resource_browser_focus {
+        Pane::Left => {
+            let rg = selected_resource_group_name(state)?;
+            Some(ActivityScope::ResourceGroup { subscription_id: sub, resource_group: rg })
+        }
+        Pane::Right => {
+            let filtered = filtered_resources(state);
+            let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
+            let res = filtered.get(cursor)?;
+            Some(ActivityScope::Resource {
+                subscription_id: sub,
+                resource_group: res.resource_group.clone(),
+                resource_id: res.id.clone(),
+                resource_name: res.name.clone(),
+            })
+        }
+    }
+}
+
 /* ============================================================================================== */
 
 /// A selected VM's coordinates, for opening the run-command view.

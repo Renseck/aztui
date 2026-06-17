@@ -35,7 +35,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         .split(area);
 
     // Search input
-    crate::ui::widgets::search_input::render(frame, layout[0], state, theme);
+    crate::ui::widgets::search_input::render(
+        frame,
+        layout[0],
+        &state.search_query,
+        state.search_focused,
+        theme,
+    );
 
     // Build flat list
     let items = build_flat_list(state);

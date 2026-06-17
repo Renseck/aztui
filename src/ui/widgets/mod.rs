@@ -1,3 +1,4 @@
+pub mod activity_log;
 pub mod context_switcher;
 pub mod cost_explorer;
 pub mod modal;

@@ -53,6 +53,11 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         return handle_run_command_input(key, state);
     }
 
+    // Activity log view has its own keybindings.
+    if state.active_view == View::ActivityLog {
+        return handle_activity_log_input(key, state);
+    }
+
     match (key.modifiers, key.code) {
         // Quit
         (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
@@ -103,6 +108,7 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
             Some(Command::NavigateTo(View::ResourceBrowser))
         }
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
 
         _ => None
     }
@@ -183,6 +189,12 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
             }
         }
 
+        // Activity log for the selected resource / resource group
+        (KeyModifiers::NONE, KeyCode::Char('a')) => {
+            resource_browser::activity_scope_for_selection(state)
+                .map(|scope| Command::OpenResourceActivity { scope })
+        }
+
         // Search
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
 
@@ -211,6 +223,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
 
         _ => None,
     }
@@ -286,6 +299,7 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
         (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
 
         _ => None,
     }
@@ -332,6 +346,71 @@ fn handle_run_command_input(key: KeyEvent, state: &AppState) -> Option<Command> 
 }
 
 /* ============================================================================================== */
+fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    let activity = state.activity.as_ref()?;
+
+    // Search-entry mode (activity-local; does not use the global search flag).
+    if activity.search_focused {
+        return match key.code {
+            KeyCode::Esc | KeyCode::Enter => Some(Command::SetActivitySearchFocus(false)),
+            KeyCode::Backspace => {
+                let mut q = activity.search.clone();
+                q.pop();
+                Some(Command::UpdateActivitySearch(q))
+            }
+            KeyCode::Char(c) => {
+                let mut q = activity.search.clone();
+                q.push(c);
+                Some(Command::UpdateActivitySearch(q))
+            }
+            _ => None,
+        };
+    }
+
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
+
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
+
+        // Detail modal for the selected entry.
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            crate::ui::widgets::activity_log::selected_entry(state)
+                .map(|e| Command::OpenModal(Box::new(Modal::ActivityDetail(Box::new(e)))))
+        }
+
+        // Window cycling.
+        (KeyModifiers::NONE, KeyCode::Char('[') | KeyCode::Char('h')) => Some(Command::CycleActivityWindow(-1)),
+        (KeyModifiers::NONE, KeyCode::Char(']') | KeyCode::Char('l')) => Some(Command::CycleActivityWindow(1)),
+
+        // Scope broaden, failed-only, search, refresh.
+        (KeyModifiers::NONE, KeyCode::Char('s')) => Some(Command::CycleActivityScope),
+        (KeyModifiers::NONE, KeyCode::Char('f')) => Some(Command::ToggleActivityFailedOnly),
+        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::SetActivitySearchFocus(true)),
+        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchActivityLog),
+
+        (KeyModifiers::NONE, KeyCode::Esc) => Some(Command::NavigateTo(View::ContextSwitcher)),
+
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            let filtered = quick_switch::build_filtered(state, "");
+            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
+                query: String::new(),
+                filtered,
+                cursor: 0,
+            })))
+        }
+
+        (KeyModifiers::NONE, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
+        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
+        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+        (KeyModifiers::NONE, KeyCode::Char('4')) => None, // already here
+
+        _ => None,
+    }
+}
+
+/* ============================================================================================== */
 fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<Command> {
     match modal {
         Modal::QuickSwitch { query, filtered, cursor } => {
@@ -343,6 +422,10 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
             _ => None,
         },
         Modal::ErrorDetail(_) => match key.code {
+            KeyCode::Esc | KeyCode::Enter => Some(Command::CloseModal),
+            _ => None,
+        },
+        Modal::ActivityDetail(_) => match key.code {
             KeyCode::Esc | KeyCode::Enter => Some(Command::CloseModal),
             _ => None,
         },
