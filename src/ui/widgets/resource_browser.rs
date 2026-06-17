@@ -9,6 +9,18 @@ use crate::ui::theme::Theme;
 use crate::ui::widgets::SPINNER_CHARS;
 
 /* ============================================================================================== */
+/*                                        VM identification                                       */
+/* ============================================================================================== */
+
+/// ARM resource type for a virtual machine.
+pub const VM_RESOURCE_TYPE: &str = "Microsoft.Compute/virtualMachines";
+
+/// Returns true if the given ARM resource type is a virtual machine.
+pub fn is_vm(resource_type: &str) -> bool {
+    resource_type == VM_RESOURCE_TYPE
+}
+
+/* ============================================================================================== */
 /*                                   Resource type abbreviations                                  */
 /* ============================================================================================== */
 
@@ -222,11 +234,24 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
     };
 
     let rg_name = selected_resource_group_name(state).unwrap_or_default();
-    let count = filtered_resources(state).len();
-    let title = if rg_name.is_empty() {
+    let resources = filtered_resources(state);
+    let count = resources.len();
+    let sel_cursor = state.resource_cursor.min(count.saturating_sub(1));
+    let selected_is_vm = resources.get(sel_cursor).map_or(false, |r| is_vm(&r.resource_type));
+
+    let base_title = if rg_name.is_empty() {
         " Resources ".to_string()
     } else {
         format!(" {} ({}) ", rg_name, count)
+    };
+
+    let title = if is_focused && selected_is_vm {
+        Line::from(vec![
+            Span::styled(base_title, theme.surface_style().fg(theme.text)),
+            Span::styled("↵ run-command (enter) ", theme.hint_style()),
+        ])
+    } else {
+        Line::from(Span::styled(base_title, theme.surface_style().fg(theme.text)))
     };
 
     let block = Block::default()
@@ -280,9 +305,15 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
                 theme.surface_style().fg(theme.text)
             };
 
+            let type_style = if is_vm(&res.resource_type) {
+                theme.vm_type_style()
+            } else {
+                theme.surface_style().fg(theme.azure_light)
+            };
+
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{}{}", prefix, res.name), name_style),
-                Span::styled(format!("  {}", abbrev_type), theme.surface_style().fg(theme.azure_light)),
+                Span::styled(format!("  {}", abbrev_type), type_style),
                 Span::styled(format!("  {}", location), theme.surface_style().fg(theme.subtle)),
             ]))
         })
@@ -350,7 +381,7 @@ pub fn selected_vm_target(state: &AppState) -> Option<VmTarget> {
     let filtered = filtered_resources(state);
     let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
     let res = filtered.get(cursor)?;
-    if res.resource_type != "Microsoft.Compute/virtualMachines" {
+    if !is_vm(&res.resource_type) {
         return None;
     }
     let subscription_id = state.active_context.as_ref()?.subscription.id.clone();
@@ -381,4 +412,25 @@ pub fn filtered_resources(state: &AppState) -> Vec<&Resource> {
             })
         })
         .collect()
+}
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::is_vm;
+
+    #[test]
+    fn is_vm_true_for_virtual_machine_type() {
+        assert!(is_vm("Microsoft.Compute/virtualMachines"));
+    }
+
+    #[test]
+    fn is_vm_false_for_other_types() {
+        assert!(!is_vm("Microsoft.Storage/storageAccounts"));
+        assert!(!is_vm("Microsoft.Compute/disks"));
+        assert!(!is_vm(""));
+    }
 }

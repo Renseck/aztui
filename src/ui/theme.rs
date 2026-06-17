@@ -116,6 +116,11 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    /// Style for the resource-type label of a VM row (distinct + actionable).
+    pub fn vm_type_style(&self) -> Style {
+        Style::default().fg(self.teal).add_modifier(Modifier::BOLD)
+    }
+
     /// Style for the status bar.
     pub fn status_bar_style(&self) -> Style {
         Style::default().bg(self.surface).fg(self.subtle)
