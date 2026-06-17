@@ -59,6 +59,7 @@ pub enum Modal {
         error: Option<String>,
         mode: PasswordMode,
     },
+    ActivityDetail(Box<crate::domain::models::ActivityLogEntry>),
     ErrorDetail(AppError),
 }
 

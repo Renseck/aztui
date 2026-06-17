@@ -346,6 +346,10 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
             KeyCode::Esc | KeyCode::Enter => Some(Command::CloseModal),
             _ => None,
         },
+        Modal::ActivityDetail(_) => match key.code {
+            KeyCode::Esc | KeyCode::Enter => Some(Command::CloseModal),
+            _ => None,
+        },
         Modal::PasswordPrompt { .. } => handle_password_input(key, state),
     }
 }

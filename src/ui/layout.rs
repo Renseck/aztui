@@ -42,6 +42,7 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
             Modal::ErrorDetail(_) => modal::render_error_detail(frame, state, theme),
             Modal::Confirm { .. } => modal::render_confirm(frame, state, theme),
             Modal::PasswordPrompt { .. } => modal::render_password_prompt(frame, state, theme),
+            Modal::ActivityDetail {.. } => {},
         }
     }
 }
