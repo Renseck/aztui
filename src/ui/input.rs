@@ -94,9 +94,18 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         // Help
         (KeyModifiers::SHIFT, KeyCode::Char('?')) => {
             if state.active_view == View::Help {
-                Some(Command::NavigateTo(View::ContextSwitcher))
+                Some(Command::NavigateTo(state.previous_view.clone()))
             } else {
                 Some(Command::NavigateTo(View::Help))
+            }
+        }
+
+        // Esc closes the help screen back to where you were.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if state.active_view == View::Help {
+                Some(Command::NavigateTo(state.previous_view.clone()))
+            } else {
+                None
             }
         }
 

@@ -211,6 +211,7 @@ pub struct AppState {
 
     // Navigation & UI
     pub active_view: View,
+    pub previous_view: View,
     pub search_query: String,
     pub search_focused: bool,
     pub modal: Option<Modal>,
@@ -272,6 +273,7 @@ impl AppState {
             active_context: None,
             recent_contexts: Vec::new(),
             active_view: View::ContextSwitcher,
+            previous_view: View::ContextSwitcher,
             search_query: String::new(),
             search_focused: false,
             modal: None,
@@ -374,7 +376,10 @@ pub async fn dispatch_command(
         }
 
         Command::NavigateTo(view) => {
-            let _prev_view = state.active_view.clone();
+            let prev_view = state.active_view.clone();
+            if view == View::Help && prev_view != View::Help {
+                state.previous_view = prev_view;
+            }
             state.active_view = view.clone();
             state.search_query.clear();
             state.search_focused = false;
