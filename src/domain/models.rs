@@ -226,3 +226,29 @@ pub struct CostLineItem {
     pub service_name: String,
     pub amount: f64,
 }
+
+/* ============================================================================================== */
+
+/// A single Azure Activity Log entry, normalised for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityLogEntry {
+    pub timestamp: String,             // eventTimestamp (ISO 8601)
+    pub operation: String,             // operationName.localizedValue (fallback: value)
+    pub status: String,                // status.value: Succeeded | Failed | Started
+    pub level: String,                 // Critical | Error | Warning | Informational
+    pub caller: Option<String>,
+    pub resource_id: String,
+    pub resource_name: String,         // derived via resource_name_from_id
+    pub resource_group: Option<String>,
+    pub correlation_id: Option<String>,
+    pub detail: Option<String>,        // statusMessage / description / subStatus
+}
+
+impl ActivityLogEntry {
+    /// True if this entry represents a failure (status Failed or error-level).
+    pub fn is_failure(&self) -> bool {
+        self.status.eq_ignore_ascii_case("Failed")
+            || self.level.eq_ignore_ascii_case("Error")
+            || self.level.eq_ignore_ascii_case("Critical")
+    }
+}

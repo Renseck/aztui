@@ -227,6 +227,13 @@ pub fn parse_resource_group_list(
     Ok(groups)
 }
 
+/* ========================================== Activity ========================================== */
+/// Returns the last `/`-segment of an ARM resource ID (its short name), or an
+/// empty string if the ID is empty.
+pub fn resource_name_from_id(resource_id: &str) -> String {
+    resource_id.rsplit('/').next().unwrap_or("").to_string()
+}
+
 /* ============================================================================================== */
 /// Parses the output of `az resource list --resource-group <name>` into a list
 /// of [`Resource`]s.
@@ -618,5 +625,16 @@ mod tests {
         let out = parse_run_command_output(json).unwrap();
         assert_eq!(out.stderr, "boom");
         assert!(!out.succeeded);
+    }
+
+    #[test]
+    fn resource_name_from_id_takes_last_segment() {
+        let id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/web-01";
+        assert_eq!(resource_name_from_id(id), "web-01");
+    }
+
+    #[test]
+    fn resource_name_from_id_handles_empty() {
+        assert_eq!(resource_name_from_id(""), "");
     }
 }
