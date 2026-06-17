@@ -159,7 +159,7 @@ pub fn should_check_now() -> bool {
         return true;
     };
     match SystemTime::now().duration_since(modified) {
-        Ok(age) => age >= Duration::from_secs(24 * 60 * 60),
+        Ok(age) => age >= Duration::from_secs(8 * 60 * 60),
         Err(_) => true,
     }
 }
