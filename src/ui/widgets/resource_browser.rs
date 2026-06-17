@@ -9,6 +9,18 @@ use crate::ui::theme::Theme;
 use crate::ui::widgets::SPINNER_CHARS;
 
 /* ============================================================================================== */
+/*                                        VM identification                                       */
+/* ============================================================================================== */
+
+/// ARM resource type for a virtual machine.
+pub const VM_RESOURCE_TYPE: &str = "Microsoft.Compute/virtualMachines";
+
+/// Returns true if the given ARM resource type is a virtual machine.
+pub fn is_vm(resource_type: &str) -> bool {
+    resource_type == VM_RESOURCE_TYPE
+}
+
+/* ============================================================================================== */
 /*                                   Resource type abbreviations                                  */
 /* ============================================================================================== */
 
@@ -350,7 +362,7 @@ pub fn selected_vm_target(state: &AppState) -> Option<VmTarget> {
     let filtered = filtered_resources(state);
     let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
     let res = filtered.get(cursor)?;
-    if res.resource_type != "Microsoft.Compute/virtualMachines" {
+    if !is_vm(&res.resource_type) {
         return None;
     }
     let subscription_id = state.active_context.as_ref()?.subscription.id.clone();
@@ -381,4 +393,25 @@ pub fn filtered_resources(state: &AppState) -> Vec<&Resource> {
             })
         })
         .collect()
+}
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::is_vm;
+
+    #[test]
+    fn is_vm_true_for_virtual_machine_type() {
+        assert!(is_vm("Microsoft.Compute/virtualMachines"));
+    }
+
+    #[test]
+    fn is_vm_false_for_other_types() {
+        assert!(!is_vm("Microsoft.Storage/storageAccounts"));
+        assert!(!is_vm("Microsoft.Compute/disks"));
+        assert!(!is_vm(""));
+    }
 }
