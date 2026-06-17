@@ -89,6 +89,35 @@ pub enum Command {
     /// Execute the current script on the selected VM.
     RunVmCommand,
 
+    /* ===================================== Activity log ====================================== */
+
+    /// Open the activity log for a specific scope (from the resource browser).
+    OpenResourceActivity {
+        scope: crate::domain::activity::ActivityScope,
+    },
+
+    /// Fetch (or refresh) the activity log for the current scope + window.
+    FetchActivityLog,
+
+    /// Cycle the time window: +1 wider, -1 narrower.
+    CycleActivityWindow(i8),
+
+    /// Broaden the scope one level (resource → group → subscription).
+    CycleActivityScope,
+
+    /// Toggle the failed-only filter.
+    ToggleActivityFailedOnly,
+
+    /// Focus / unfocus the activity-log search box.
+    SetActivitySearchFocus(bool),
+
+    /// Update the activity-log search query.
+    UpdateActivitySearch(String),
+
+    /// Delivered when an activity-log fetch completes.
+    #[doc(hidden)]
+    ActivityLogResult(Result<Vec<crate::domain::models::ActivityLogEntry>, AppError>),
+
     /* ======================================== Security ======================================== */
 
     Lock,

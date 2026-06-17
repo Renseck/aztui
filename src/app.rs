@@ -346,6 +346,7 @@ const SLOT_RESOURCE_GROUPS: OperationId = u64::MAX - 3;
 const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 const SLOT_COST: OperationId = u64::MAX - 5;
 const SLOT_RUN_COMMAND: OperationId = u64::MAX - 6;
+const SLOT_ACTIVITY: OperationId = u64::MAX - 7;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -357,6 +358,7 @@ pub async fn dispatch_command(
     resources: Arc<dyn ResourceProvider>,
     cost: Arc<dyn CostProvider>,
     vm: Arc<dyn VmProvider>,
+    activity: Arc<dyn ActivityLogProvider>,
 ) -> Vec<Event> {
     state.last_interaction = Instant::now();
     let mut events = Vec::new();
@@ -393,6 +395,17 @@ pub async fn dispatch_command(
                 && state.active_context.is_some()
             {
                 let _ = cmd_tx.try_send(Command::FetchCostSummary(state.cost_period.clone()));
+            }
+
+            // Entering the activity log defaults to subscription scope.
+            if view == View::ActivityLog {
+                if let Some(ctx) = &state.active_context {
+                    let scope = ActivityScope::Subscription {
+                        subscription_id: ctx.subscription.id.clone(),
+                    };
+                    state.activity = Some(ActivityLogState::new(scope));
+                    let _ = cmd_tx.try_send(Command::FetchActivityLog);
+                }
             }
         }
 
@@ -522,6 +535,96 @@ pub async fn dispatch_command(
             }
         }
 
+        Command::OpenResourceActivity { scope } => {
+            state.activity = Some(ActivityLogState::new(scope));
+            state.active_view = View::ActivityLog;
+            events.push(Event::ViewChanged(View::ActivityLog));
+            let _ = cmd_tx.try_send(Command::FetchActivityLog);
+        }
+
+        Command::FetchActivityLog => {
+            let (scope, window) = match state.activity.as_ref() {
+                Some(a) => (a.scope.clone(), a.window),
+                None => return events,
+            };
+
+            abort_slot(state, SLOT_ACTIVITY);
+
+            let op_id = SLOT_ACTIVITY;
+            let tx = cmd_tx.clone();
+            let provider = Arc::clone(&activity);
+
+            let handle = tokio::spawn(async move {
+                let result = provider.list_activity(&scope, window).await;
+                let _ = tx.send(Command::ActivityLogResult(result)).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: "Loading activity log...".to_string(),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::ActivityLogResult(result) => {
+            state.pending_operations.remove(&SLOT_ACTIVITY);
+            events.push(Event::OperationCompleted(SLOT_ACTIVITY));
+
+            match result {
+                Ok(entries) => {
+                    if let Some(a) = state.activity.as_mut() {
+                        a.entries = entries;
+                        a.cursor = 0;
+                    }
+                }
+                Err(e) => {
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
+        }
+
+        Command::CycleActivityWindow(delta) => {
+            if let Some(a) = state.activity.as_mut() {
+                a.window = if delta < 0 { a.window.narrower() } else { a.window.wider() };
+                a.cursor = 0;
+            }
+            let _ = cmd_tx.try_send(Command::FetchActivityLog);
+        }
+
+        Command::CycleActivityScope => {
+            let widened = state.activity.as_ref().and_then(|a| a.scope.widened());
+            if let (Some(a), Some(scope)) = (state.activity.as_mut(), widened) {
+                a.scope = scope;
+                a.cursor = 0;
+                let _ = cmd_tx.try_send(Command::FetchActivityLog);
+            }
+        }
+
+        Command::ToggleActivityFailedOnly => {
+            if let Some(a) = state.activity.as_mut() {
+                a.failed_only = !a.failed_only;
+                a.cursor = 0;
+            }
+        }
+
+        Command::SetActivitySearchFocus(focused) => {
+            if let Some(a) = state.activity.as_mut() {
+                a.search_focused = focused;
+            }
+        }
+
+        Command::UpdateActivitySearch(q) => {
+            if let Some(a) = state.activity.as_mut() {
+                a.search = q;
+                a.cursor = 0;
+            }
+        }
+
         Command::OpenModal(modal) => {
             let m = *modal;
             events.push(Event::ModalOpened(m.clone()));
@@ -562,6 +665,12 @@ pub async fn dispatch_command(
             } else if state.active_view == View::CostExplorer {
                 if state.cost_selected_index > 0 {
                     state.cost_selected_index -= 1;
+                }
+            } else if state.active_view == View::ActivityLog {
+                if let Some(a) = state.activity.as_mut() {
+                    if a.cursor > 0 {
+                        a.cursor -= 1;
+                    }
                 }
             } else if state.context_list_cursor > 0 {
                 state.context_list_cursor -= 1;
@@ -605,6 +714,11 @@ pub async fn dispatch_command(
                     .saturating_sub(1);
                 if state.cost_selected_index < max {
                     state.cost_selected_index += 1;
+                }
+            } else if state.active_view == View::ActivityLog {
+                let max = crate::ui::widgets::activity_log::filtered_len(state).saturating_sub(1);
+                if let Some(a) = state.activity.as_mut() {
+                    a.cursor = clamp_increment(a.cursor, max + 1);
                 }
             } else {
                 let total = crate::ui::widgets::context_switcher::total_selectable(state);
