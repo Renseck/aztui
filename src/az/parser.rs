@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::domain::{CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup, RunCommandOutput};
+use crate::domain::{ActivityLogEntry, CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup, RunCommandOutput};
 use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
@@ -98,6 +98,43 @@ struct RawCostColumn {
     #[serde(rename = "type")]
     #[allow(dead_code)]
     column_type: String,
+}
+
+/* ============================================================================================== */
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct RawLocalized {
+    #[serde(default)]
+    value: String,
+    #[serde(default)]
+    localized_value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawActivityEntry {
+    #[serde(default)]
+    event_timestamp: String,
+    #[serde(default)]
+    operation_name: RawLocalized,
+    #[serde(default)]
+    status: RawLocalized,
+    #[serde(default)]
+    sub_status: RawLocalized,
+    #[serde(default)]
+    level: String,
+    #[serde(default)]
+    caller: Option<String>,
+    #[serde(default)]
+    resource_id: String,
+    #[serde(default)]
+    resource_group_name: Option<String>,
+    #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    properties: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /* ============================================================================================== */
@@ -232,6 +269,69 @@ pub fn parse_resource_group_list(
 /// empty string if the ID is empty.
 pub fn resource_name_from_id(resource_id: &str) -> String {
     resource_id.rsplit('/').next().unwrap_or("").to_string()
+}
+
+/// Parses the output of `az monitor activity-log list` into normalised entries.
+///
+/// `detail` prefers `properties.statusMessage`, then `description`, then the
+/// localized `subStatus` — whichever first yields non-empty text — so failures
+/// surface their error message.
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] on JSON failures.
+pub fn parse_activity_log(json: &str) -> Result<Vec<ActivityLogEntry>, AppError> {
+    let raw: Vec<RawActivityEntry> = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("activity log: {}", e)))?;
+
+    let entries = raw
+        .into_iter()
+        .map(|r| {
+            let operation = first_non_empty(&[
+                &r.operation_name.localized_value,
+                &r.operation_name.value,
+            ]);
+            let status = first_non_empty(&[&r.status.value, &r.status.localized_value]);
+
+            let status_message = r
+                .properties
+                .as_ref()
+                .and_then(|p| p.get("statusMessage"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let detail = status_message
+                .filter(|s| !s.is_empty())
+                .or_else(|| r.description.clone().filter(|s| !s.is_empty()))
+                .or_else(|| {
+                    let ss = &r.sub_status.localized_value;
+                    if ss.is_empty() { None } else { Some(ss.clone()) }
+                });
+
+            ActivityLogEntry {
+                resource_name: resource_name_from_id(&r.resource_id),
+                timestamp: r.event_timestamp,
+                operation,
+                status,
+                level: r.level,
+                caller: r.caller,
+                resource_id: r.resource_id,
+                resource_group: r.resource_group_name,
+                correlation_id: r.correlation_id,
+                detail,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Returns the first non-empty string from `candidates`, or an empty string.
+fn first_non_empty(candidates: &[&str]) -> String {
+    candidates
+        .iter()
+        .find(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
 }
 
 /* ============================================================================================== */
@@ -506,6 +606,33 @@ mod tests {
         ]
     }"#;
 
+    const ACTIVITY_LOG_JSON: &str = r#"[
+        {
+            "eventTimestamp": "2026-06-17T10:42:00Z",
+            "operationName": { "value": "Microsoft.Compute/virtualMachines/restart/action", "localizedValue": "Restart Virtual Machine" },
+            "status": { "value": "Succeeded", "localizedValue": "Succeeded" },
+            "subStatus": { "value": "OK", "localizedValue": "OK" },
+            "level": "Informational",
+            "caller": "ops@contoso.com",
+            "resourceId": "/subscriptions/s/resourceGroups/rg-web/providers/Microsoft.Compute/virtualMachines/web-01",
+            "resourceGroupName": "rg-web",
+            "correlationId": "corr-1",
+            "description": ""
+        },
+        {
+            "eventTimestamp": "2026-06-17T09:58:00Z",
+            "operationName": { "value": "Microsoft.Resources/deployments/write", "localizedValue": "Create Deployment" },
+            "status": { "value": "Failed", "localizedValue": "Failed" },
+            "subStatus": { "value": "Conflict", "localizedValue": "Conflict" },
+            "level": "Error",
+            "caller": "ci@contoso.com",
+            "resourceId": "/subscriptions/s/resourceGroups/rg-web/providers/Microsoft.Resources/deployments/main",
+            "resourceGroupName": "rg-web",
+            "correlationId": "corr-2",
+            "properties": { "statusMessage": "Deployment failed: resource already exists" }
+        }
+    ]"#;
+
     #[test]
     fn parse_account_list_groups_by_tenant() {
         let (tenants, by_tenant) =
@@ -636,5 +763,26 @@ mod tests {
     #[test]
     fn resource_name_from_id_handles_empty() {
         assert_eq!(resource_name_from_id(""), "");
+    }
+
+    #[test]
+    fn parse_activity_log_basic() {
+        let entries = parse_activity_log(ACTIVITY_LOG_JSON).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].operation, "Restart Virtual Machine");
+        assert_eq!(entries[0].status, "Succeeded");
+        assert_eq!(entries[0].resource_name, "web-01");
+        assert_eq!(entries[0].caller.as_deref(), Some("ops@contoso.com"));
+    }
+
+    #[test]
+    fn parse_activity_log_failure_carries_detail() {
+        let entries = parse_activity_log(ACTIVITY_LOG_JSON).unwrap();
+        let failed = &entries[1];
+        assert!(failed.is_failure());
+        assert_eq!(
+            failed.detail.as_deref(),
+            Some("Deployment failed: resource already exists")
+        );
     }
 }
