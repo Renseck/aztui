@@ -115,7 +115,9 @@ fn render_content(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppSta
         View::ActivityLog => {
             crate::ui::widgets::activity_log::render(frame, area, state, theme);
         }
-        View::GlobalSearch => {}
+        View::GlobalSearch => {
+            crate::ui::widgets::global_search::render(frame, area, state, theme);
+        }
         View::Help => render_help(frame, area, theme),
     }
 }
@@ -166,8 +168,8 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
         Line::from(vec![Span::styled("  Actions", theme.heading_style())]),
         Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
         Line::from(vec![
-            Span::styled("  1 / 2 / 3 / 4   ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Context / Resources / Cost / Activity log", theme.surface_style().fg(theme.text)),
+            Span::styled("  1 / 2 / 3 / 4 / 5   ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Context / Resources / Cost / Activity log / Global search", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
             Span::styled("  /               ", theme.surface_style().fg(theme.azure_light)),

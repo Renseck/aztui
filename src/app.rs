@@ -484,6 +484,10 @@ pub async fn dispatch_command(
             state.global_search_cursor = 0;
         }
 
+        Command::SetGlobalSearchFocus(focused) => {
+            state.search_focused = focused;
+        }
+
         Command::FetchGlobalInventory => {
             abort_slot(state, SLOT_GRAPH);
             let op_id = SLOT_GRAPH;
@@ -836,6 +840,10 @@ pub async fn dispatch_command(
                         a.cursor -= 1;
                     }
                 }
+            } else if state.active_view == View::GlobalSearch {
+                if state.global_search_cursor > 0 {
+                    state.global_search_cursor -= 1;
+                }
             } else if state.context_list_cursor > 0 {
                 state.context_list_cursor -= 1;
             }
@@ -883,6 +891,13 @@ pub async fn dispatch_command(
                 let max = crate::ui::widgets::activity_log::filtered_len(state).saturating_sub(1);
                 if let Some(a) = state.activity.as_mut() {
                     a.cursor = clamp_increment(a.cursor, max + 1);
+                }
+            } else if state.active_view == View::GlobalSearch {
+                let max = crate::ui::widgets::global_search::filtered_global_resources(state)
+                    .len()
+                    .saturating_sub(1);
+                if state.global_search_cursor < max {
+                    state.global_search_cursor += 1;
                 }
             } else {
                 let total = crate::ui::widgets::context_switcher::total_selectable(state);
@@ -1505,6 +1520,7 @@ pub(crate) fn clamp_increment(cursor: usize, len: usize) -> usize {
 /// `--subscription` explicitly). Any other type switches the active context to
 /// the row's subscription (when it is present in `ctx`), after which the caller
 /// drives the resource-browser drill-in.
+#[cfg(test)]
 pub(crate) fn global_resource_command(
     row: &crate::domain::models::GlobalResource,
     ctx: Option<&AzureContext>,

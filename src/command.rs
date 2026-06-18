@@ -144,6 +144,11 @@ pub enum Command {
     /// Update the global-search fuzzy query.
     UpdateGlobalSearch(String),
 
+    /// Focus or unfocus the global-search text input without clearing the query.
+    /// The query stays applied while unfocused so results remain filtered for
+    /// list navigation.
+    SetGlobalSearchFocus(bool),
+
     /// Open the selected global-search result (type-aware routing).
     OpenGlobalResource,
 

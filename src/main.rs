@@ -308,13 +308,7 @@ async fn run_loop(
                     if matches!(&cmd, Command::UpdateSearch(s) if s == "\x1B") {
                         state.search_query.clear();
                         state.search_focused = false;
-                    } else if matches!(&cmd, Command::UpdateGlobalSearch(s) if s == "\x1B") {
-                        state.global_search_query.clear();
-                        state.search_focused = false;
                     } else if matches!(&cmd, Command::UpdateSearch(_)) && !state.search_focused {
-                        state.search_focused = true;
-                        let _ = cmd_tx.send(cmd).await;
-                    } else if matches!(&cmd, Command::UpdateGlobalSearch(_)) && !state.search_focused {
                         state.search_focused = true;
                         let _ = cmd_tx.send(cmd).await;
                     } else {

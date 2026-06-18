@@ -463,10 +463,15 @@ fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command>
 
 /* ============================================================================================== */
 fn handle_global_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    // Search-entry mode reuses the global search flag.
+    // Search-entry mode. Esc/Enter commit the filter and drop back to list
+    // navigation (the query stays applied); arrows move the selection while
+    // still in the search box; `/` is ignored so it never types a literal slash.
     if state.search_focused {
         return match key.code {
-            KeyCode::Esc => Some(Command::UpdateGlobalSearch(String::from("\x1B"))),
+            KeyCode::Esc | KeyCode::Enter => Some(Command::SetGlobalSearchFocus(false)),
+            KeyCode::Up => Some(Command::NavUp),
+            KeyCode::Down => Some(Command::NavDown),
+            KeyCode::Char('/') => None,
             KeyCode::Backspace => {
                 let mut q = state.global_search_query.clone();
                 q.pop();
@@ -477,7 +482,6 @@ fn handle_global_search_input(key: KeyEvent, state: &AppState) -> Option<Command
                 q.push(c);
                 Some(Command::UpdateGlobalSearch(q))
             }
-            KeyCode::Enter => Some(Command::OpenGlobalResource),
             _ => None,
         };
     }
@@ -487,9 +491,17 @@ fn handle_global_search_input(key: KeyEvent, state: &AppState) -> Option<Command
         (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
         (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
         (KeyModifiers::NONE, KeyCode::Enter) => Some(Command::OpenGlobalResource),
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateGlobalSearch(String::new())),
+        // `/` focuses the search input, keeping any existing query so it can be refined.
+        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::SetGlobalSearchFocus(true)),
         (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchGlobalInventory),
-        (KeyModifiers::NONE, KeyCode::Esc) => Some(Command::NavigateTo(View::ContextSwitcher)),
+        // Esc clears an active filter first; with no filter, it backs out to the context switcher.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if state.global_search_query.is_empty() {
+                Some(Command::NavigateTo(View::ContextSwitcher))
+            } else {
+                Some(Command::UpdateGlobalSearch(String::new()))
+            }
+        }
         (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
             let filtered = quick_switch::build_filtered(state, "");
             Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
