@@ -90,7 +90,7 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
 | `[` or `h` | Previous month (cost explorer) |
 | `]` or `l` | Next month (cost explorer) |
 | `r` | Refresh current view |
-| `1` / `2` / `3` / `4` | Context switcher / Resource browser / Cost explorer / Activity log viewer |
+| `1` / `2` / `3` / `4` / `5` | Context switcher / Resource browser / Cost explorer / Activity log viewer / Global search (cross-subscription) |
 | `g` | Toggle cost grouping: service ↔ resource group (cost explorer) |
 | `Enter` | Drill into resource group (cost explorer, grouped by RG) |
 | `Backspace` | Up one level (cost explorer) |
@@ -111,6 +111,11 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
 - **4 - Activity log viewer**: Subscription-level timestamped activity logs. Pressing `a` from 
   the resource browser put you in scoped activity logs - pressing `s` takes you back
   to subscription level. `f` toggles to showing failures only.
+- **5 — Global search**: Fuzzy-find any resource across every subscription you
+  can see, in one Resource Graph call. Enter on a VM opens the run-command view;
+  Enter on any other resource switches context and drills into its resource
+  group. Requires the `resource-graph` CLI extension (aztui offers to install it
+  if missing).
 
 ### Configuration
 
