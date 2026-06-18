@@ -76,6 +76,22 @@ pub struct Resource {
 
 /* ============================================================================================== */
 
+/// A resource discovered via Azure Resource Graph, spanning all visible
+/// subscriptions. Unlike [`Resource`], it carries its own `subscription_id`
+/// because global search crosses subscriptions. The subscription *display name*
+/// is resolved at render time, not stored here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalResource {
+    pub id: String,              // full ARM resource ID
+    pub name: String,
+    pub resource_type: String,   // ARG returns this lowercased, e.g. "microsoft.compute/virtualmachines"
+    pub resource_group: String,
+    pub subscription_id: String,
+    pub location: String,
+}
+
+/* ============================================================================================== */
+
 /// Result of an `az vm run-command invoke` call. Run-command returns stdout and
 /// stderr as separate status entries; the script's exit code is not reliably
 /// surfaced, so `succeeded` is derived from the provisioning `display_status`.
@@ -250,5 +266,29 @@ impl ActivityLogEntry {
         self.status.eq_ignore_ascii_case("Failed")
             || self.level.eq_ignore_ascii_case("Error")
             || self.level.eq_ignore_ascii_case("Critical")
+    }
+}
+
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod global_resource_tests {
+    use super::*;
+
+    #[test]
+    fn global_resource_constructs_with_all_fields() {
+        let r = GlobalResource {
+            id: "/subscriptions/s/resourceGroups/rg/providers/x/web-01".into(),
+            name: "web-01".into(),
+            resource_type: "microsoft.compute/virtualmachines".into(),
+            resource_group: "rg".into(),
+            subscription_id: "s".into(),
+            location: "westeurope".into(),
+        };
+        assert_eq!(r.name, "web-01");
+        assert_eq!(r.subscription_id, "s");
     }
 }
