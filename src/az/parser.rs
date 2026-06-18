@@ -427,7 +427,7 @@ pub fn parse_cost_query(
             _ => 0.0,
         };
 
-        let service_name = match &row[1] {
+        let label = match &row[1] {
             serde_json::Value::String(s) => s.clone(),
             _ => "Unknown".to_string(),
         };
@@ -438,7 +438,7 @@ pub fn parse_cost_query(
 
         total += amount;
         breakdown.push(CostLineItem {
-            service_name,
+            label,
             amount,
         });
     }
@@ -713,8 +713,8 @@ mod tests {
         // Total should be sum of all rows.
         assert!((summary.total - 1193.57).abs() < 0.01);
         // Sorted by amount descending.
-        assert_eq!(summary.breakdown[0].service_name, "Virtual Machines");
-        assert_eq!(summary.breakdown[4].service_name, "Key Vault");
+        assert_eq!(summary.breakdown[0].label, "Virtual Machines");
+        assert_eq!(summary.breakdown[4].label, "Key Vault");
     }
 
     #[test]

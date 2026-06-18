@@ -223,7 +223,7 @@ impl CostPeriod {
 
 #[derive(Debug, Clone)]
 pub struct CostLineItem {
-    pub service_name: String,
+    pub label: String,
     pub amount: f64,
 }
 

@@ -151,7 +151,7 @@ fn render_breakdown(
     // Compute max service name length for alignment.
     let max_name_len = visible
         .iter()
-        .map(|item| item.service_name.len())
+        .map(|item| item.label.len())
         .max()
         .unwrap_or(0)
         .max(if other_count > 0 {
@@ -187,7 +187,7 @@ fn render_breakdown(
     for (idx, item) in visible.iter().enumerate() {
         let is_selected = idx == state.cost_selected_index;
         let line = build_cost_row(
-            &item.service_name,
+            &item.label,
             item.amount,
             summary.total,
             &summary.currency,
@@ -228,7 +228,7 @@ fn render_breakdown(
 
 /* ============================================================================================== */
 fn build_cost_row<'a>(
-    service_name: &str,
+    label: &str,
     amount: f64,
     total: f64,
     currency: &str,
@@ -249,7 +249,7 @@ fn build_cost_row<'a>(
     let row = format!(
         "{}{:<width$}  {:>12}  {}  {}",
         prefix,
-        service_name,
+        label,
         cost_str,
         bar,
         pct_str,
