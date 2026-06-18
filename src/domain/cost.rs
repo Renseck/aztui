@@ -25,4 +25,12 @@ pub trait CostProvider: Send + Sync {
         resource_group: &str,
         period: &CostPeriod,
     ) -> Result<CostSummary, AppError>;
+
+    /* ========================================================================================== */
+    /// Whole-subscription cost aggregated by resource group.
+    async fn get_subscription_cost_grouped_by_rg(
+        &self,
+        subscription_id: &str,
+        period: &CostPeriod,
+    ) -> Result<CostSummary, AppError>;
 }
