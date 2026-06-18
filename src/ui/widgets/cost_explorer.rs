@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::AppState;
+use crate::app::{AppState, CostGrouping, CostView};
 use crate::domain::models::CostSummary;
 use crate::ui::theme::Theme;
 use crate::ui::widgets::SPINNER_CHARS;
@@ -47,16 +47,29 @@ fn render_summary(
     render_header(frame, layout[0], state, summary, theme);
     render_breakdown(frame, layout[1], state, summary, theme);
 
-    crate::ui::widgets::hint_bar::render(
-        frame,
-        layout[2],
-        &[
+    let drill_hints: &[(&str, &str)] = match &state.cost_view {
+        CostView::Subscription(CostGrouping::ByService) => &[
             ("[/]", "period"),
+            ("g", "by RG"),
             ("r", "refresh"),
             ("Esc", "back"),
         ],
-        theme,
-    );
+        CostView::Subscription(CostGrouping::ByResourceGroup) => &[
+            ("[/]", "period"),
+            ("g", "by service"),
+            ("↵", "drill"),
+            ("r", "refresh"),
+            ("Esc", "back"),
+        ],
+        CostView::ResourceGroup(_) => &[
+            ("[/]", "period"),
+            ("r", "refresh"),
+            ("Bksp", "up"),
+            ("Esc", "up"),
+        ],
+    };
+
+    crate::ui::widgets::hint_bar::render(frame, layout[2], drill_hints, theme);
 }
 
 /* ============================================================================================== */
@@ -87,20 +100,42 @@ fn render_header(
         format_cost(summary.total, &summary.currency)
     );
 
+    // First line + grouping/scope hint depend on the current cost view.
+    let (scope_line, grouping_hint): (Line, &str) = match &state.cost_view {
+        CostView::Subscription(CostGrouping::ByService) => (
+            Line::from(vec![
+                Span::styled("  Subscription: ", theme.hint_style()),
+                Span::styled(sub_name, theme.surface_style().fg(theme.text)),
+            ]),
+            "grouped by service — g: group by resource group",
+        ),
+        CostView::Subscription(CostGrouping::ByResourceGroup) => (
+            Line::from(vec![
+                Span::styled("  Subscription: ", theme.hint_style()),
+                Span::styled(sub_name, theme.surface_style().fg(theme.text)),
+            ]),
+            "grouped by resource group — g: by service, ↵: drill in",
+        ),
+        CostView::ResourceGroup(rg) => (
+            Line::from(vec![
+                Span::styled("  Resource group: ", theme.hint_style()),
+                Span::styled(rg.clone(), theme.surface_style().fg(theme.text)),
+            ]),
+            "Backspace/Esc: back to subscription",
+        ),
+    };
+
     let lines = vec![
-        Line::from(vec![
-            Span::styled("  Subscription: ", theme.hint_style()),
-            Span::styled(sub_name, theme.surface_style().fg(theme.text)),
-        ]),
+        scope_line,
         Line::from(vec![
             Span::styled("  Period: ", theme.hint_style()),
             Span::styled(period_nav, theme.surface_style().fg(theme.azure_light)),
         ]),
-        Line::from(""),
         Line::from(vec![Span::styled(
-            total_line,
-            theme.heading_style(),
+            format!("  {}", grouping_hint),
+            theme.hint_style(),
         )]),
+        Line::from(vec![Span::styled(total_line, theme.heading_style())]),
     ];
 
     let para = Paragraph::new(lines).style(theme.base_style());
@@ -164,9 +199,13 @@ fn render_breakdown(
     let mut list_items: Vec<ListItem> = Vec::new();
 
     // Header row.
+    let column_label = match &state.cost_view {
+        CostView::Subscription(CostGrouping::ByResourceGroup) => "Resource group",
+        _ => "Service",
+    };
     let header_line = format!(
         "  {:<width$}  {:>12}  {:>10}  {:>6}",
-        "Service",
+        column_label,
         "Cost",
         "",
         "%",
@@ -371,4 +410,15 @@ pub fn total_selectable(state: &AppState) -> usize {
         }
         None => 0,
     }
+}
+
+/* ============================================================================================== */
+/// Returns the `label` of the currently selected breakdown row (the resource
+/// group name, when grouped by RG), or `None` if there is no breakdown.
+pub fn selected_row_label(state: &AppState) -> Option<String> {
+    let summary = state.cost_summary.as_ref()?;
+    summary
+        .breakdown
+        .get(state.cost_selected_index)
+        .map(|item| item.label.clone())
 }
