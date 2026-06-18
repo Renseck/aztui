@@ -954,18 +954,18 @@ pub async fn dispatch_command(
             let tx = cmd_tx.clone();
             let auth = Arc::clone(&auth);
             let sub_id = ctx.subscription.id.clone();
+            let tenant_id = ctx.tenant.id.clone();
+            let label = ctx.label();
             let ctx_clone = ctx.clone();
 
             let handle = tokio::spawn(async move {
-                let result = match auth.set_subscription(&sub_id).await {
+                let result = match auth.set_subscription(&sub_id, &tenant_id).await {
                     Ok(()) => Ok(ctx_clone),
                     Err(e) => Err(e),
                 };
                 let _ = tx.send(Command::ContextSwitchResult(result)).await;
             })
             .abort_handle();
-
-            let label = ctx.label();
             let op = PendingOperation {
                 id: op_id,
                 description: format!("Switching to {}...", label),
@@ -1002,7 +1002,8 @@ pub async fn dispatch_command(
             if let Some(ctx) = ctx {
                 let ctx_clone = ctx.clone();
                 let handle = tokio::spawn(async move {
-                    let result = match auth.set_subscription(&sub_id).await {
+                    let tenant_id = ctx.tenant.id.clone();
+                    let result = match auth.set_subscription(&sub_id, &tenant_id).await {
                         Ok(()) => Ok(ctx_clone),
                         Err(e) => Err(e),
                     };
