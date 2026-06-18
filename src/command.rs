@@ -66,7 +66,25 @@ pub enum Command {
 
     /* ===================================== Cost (Phase 4) ===================================== */
 
-    FetchCostSummary(CostPeriod),
+    /// Fetch cost for the given period under the given cost view.
+    FetchCostSummary {
+        period: CostPeriod,
+        view: crate::app::CostView,
+    },
+
+    /// Toggle the subscription-level grouping (service <-> resource group).
+    ToggleCostGrouping,
+
+    /// Drill into a resource group's per-service cost from the by-RG view.
+    DrillIntoResourceGroup(String),
+
+    /// Pop from a resource-group cost view back to the subscription level.
+    CostScopeUp,
+
+    /// Open the cost explorer scoped to a resource group (from resource browser).
+    OpenResourceGroupCost {
+        resource_group: String,
+    },
 
     /* ===================================== VM run-command ===================================== */
 
