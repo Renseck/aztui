@@ -41,6 +41,26 @@ pub enum View {
 
 /* ============================================================================================== */
 
+/// How the subscription-level cost breakdown is grouped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostGrouping {
+    ByService,
+    ByResourceGroup,
+}
+
+/* ============================================================================================== */
+
+/// What the cost explorer is currently showing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostView {
+    /// Whole-subscription cost, grouped by service or by resource group.
+    Subscription(CostGrouping),
+    /// Cost for a single resource group (always broken down by service).
+    ResourceGroup(String),
+}
+
+/* ============================================================================================== */
+
 /// Overlay modal state. `Confirm.on_confirm` is boxed to break the recursive
 /// type cycle with [`Command`].
 #[derive(Debug, Clone)]
@@ -230,6 +250,7 @@ pub struct AppState {
     pub cost_summary: Option<CostSummary>,
     pub cost_period: CostPeriod,
     pub cost_selected_index: usize,
+    pub cost_view: CostView,
 
     // Run Command
     pub run_command: Option<RunCommandSession>,
@@ -288,6 +309,7 @@ impl AppState {
             cost_summary: None,
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
+            cost_view: CostView::Subscription(CostGrouping::ByService),
             run_command: None,
             activity: None,
             pending_operations: HashMap::new(),
@@ -399,7 +421,10 @@ pub async fn dispatch_command(
                 && state.cost_summary.is_none()
                 && state.active_context.is_some()
             {
-                let _ = cmd_tx.try_send(Command::FetchCostSummary(state.cost_period.clone()));
+                let _ = cmd_tx.try_send(Command::FetchCostSummary {
+                    period: state.cost_period.clone(),
+                    view: state.cost_view.clone(),
+                });
             }
 
             // Entering the activity log defaults to subscription scope.
@@ -1185,9 +1210,9 @@ pub async fn dispatch_command(
             }
         }
         
-        /* ================================ Phase 4 placeholders ================================ */
+        /* ==================================== Cost explorer =================================== */
         
-        Command::FetchCostSummary(period) => {
+        Command::FetchCostSummary { period, view } => {
             let sub_id = match &state.active_context {
                 Some(ctx) => ctx.subscription.id.clone(),
                 None => {
@@ -1201,6 +1226,7 @@ pub async fn dispatch_command(
             };
 
             state.cost_period = period.clone();
+            state.cost_view = view.clone();
             abort_slot(state, SLOT_COST);
 
             let op_id = SLOT_COST;
@@ -1208,7 +1234,17 @@ pub async fn dispatch_command(
             let cost = Arc::clone(&cost);
 
             let handle = tokio::spawn(async move {
-                let result = cost.get_cost_summary(&sub_id, &period).await;
+                let result = match view {
+                    CostView::Subscription(CostGrouping::ByService) => {
+                        cost.get_cost_summary(&sub_id, &period).await
+                    }
+                    CostView::Subscription(CostGrouping::ByResourceGroup) => {
+                        cost.get_subscription_cost_grouped_by_rg(&sub_id, &period).await
+                    }
+                    CostView::ResourceGroup(rg) => {
+                        cost.get_resource_group_cost(&sub_id, &rg, &period).await
+                    }
+                };
                 let _ = tx.send(Command::CostSummaryResult(result)).await;
             })
             .abort_handle();
@@ -1221,6 +1257,48 @@ pub async fn dispatch_command(
             };
             events.push(Event::OperationStarted(op.clone()));
             state.pending_operations.insert(op_id, op);
+        }
+
+        Command::ToggleCostGrouping => {
+            let new_view = match &state.cost_view {
+                CostView::Subscription(CostGrouping::ByService) => {
+                    CostView::Subscription(CostGrouping::ByResourceGroup)
+                }
+                CostView::Subscription(CostGrouping::ByResourceGroup) => {
+                    CostView::Subscription(CostGrouping::ByService)
+                }
+                // No grouping toggle while drilled into a single resource group.
+                CostView::ResourceGroup(_) => return events,
+            };
+            let _ = cmd_tx.try_send(Command::FetchCostSummary {
+                period: state.cost_period.clone(),
+                view: new_view,
+            });
+        }
+
+        Command::DrillIntoResourceGroup(rg_name) => {
+            let _ = cmd_tx.try_send(Command::FetchCostSummary {
+                period: state.cost_period.clone(),
+                view: CostView::ResourceGroup(rg_name),
+            });
+        }
+
+        Command::CostScopeUp => {
+            if let CostView::ResourceGroup(_) = state.cost_view {
+                let _ = cmd_tx.try_send(Command::FetchCostSummary {
+                    period: state.cost_period.clone(),
+                    view: CostView::Subscription(CostGrouping::ByResourceGroup),
+                });
+            }
+        }
+
+        Command::OpenResourceGroupCost { resource_group } => {
+            state.active_view = View::CostExplorer;
+            events.push(Event::ViewChanged(View::CostExplorer));
+            let _ = cmd_tx.try_send(Command::FetchCostSummary {
+                period: state.cost_period.clone(),
+                view: CostView::ResourceGroup(resource_group),
+            });
         }
 
         Command::CostSummaryResult(result) => {

@@ -188,6 +188,14 @@ fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
             Span::styled("Activity log for selected resource/RG", theme.surface_style().fg(theme.text)),
         ]),
         Line::from(vec![
+            Span::styled("  g               ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Toggle cost grouping: service / resource group", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("  c               ", theme.surface_style().fg(theme.azure_light)),
+            Span::styled("Cost for selected resource group (resource browser)", theme.surface_style().fg(theme.text)),
+        ]),
+        Line::from(vec![
             Span::styled("  f / s           ", theme.surface_style().fg(theme.azure_light)),
             Span::styled("Failed-only / broaden scope (activity log)", theme.surface_style().fg(theme.text)),
         ]),

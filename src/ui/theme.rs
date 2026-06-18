@@ -180,4 +180,9 @@ impl Theme {
     pub fn heading_style(&self) -> Style {
         Style::default().fg(self.bright).add_modifier(Modifier::BOLD)
     }
+
+    /// Style for highlighted fuzzy-match characters (see docs/color-scheme.md).
+    pub fn match_style(&self) -> Style {
+        Style::default().fg(self.amber).add_modifier(Modifier::BOLD)
+    }
 }

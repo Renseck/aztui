@@ -90,7 +90,11 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
 | `[` or `h` | Previous month (cost explorer) |
 | `]` or `l` | Next month (cost explorer) |
 | `r` | Refresh current view |
-| `1` / `2` / `3` | Context switcher / Resource browser / Cost explorer |
+| `1` / `2` / `3` / `4` | Context switcher / Resource browser / Cost explorer / Activity log viewer |
+| `g` | Toggle cost grouping: service ↔ resource group (cost explorer) |
+| `Enter` | Drill into resource group (cost explorer, grouped by RG) |
+| `Backspace` | Up one level (cost explorer) |
+| `c` | Cost for selected resource group (resource browser) |
 | `?` | Toggle help screen |
 | `q` | Quit |
 
@@ -100,8 +104,13 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
   set it as the active Azure context.
 - **2 — Resource browser**: Two-pane view of resource groups (left) and
   resources (right) in the active subscription.
-- **3 — Cost explorer**: Monthly cost breakdown by service for the active
-  subscription, with period navigation.
+- **3 — Cost explorer**: Cost breakdown for the active subscription, grouped by
+  service or by resource group (`g` to toggle). Drill into a resource group
+  (`Enter`) for its per-service cost; `Backspace`/`Esc` to go back. Search is
+  fuzzy across all list views.
+- **4 - Activity log viewer**: Subscription-level timestamped activity logs. Pressing `a` from 
+  the resource browser put you in scoped activity logs - pressing `s` takes you back
+  to subscription level. `f` toggles to showing failures only.
 
 ### Configuration
 

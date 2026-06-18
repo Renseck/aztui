@@ -91,10 +91,13 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
             } else {
                 theme.surface_style().fg(theme.text)
             };
-            list_items.push(ListItem::new(Line::from(Span::styled(
-                format!("  {}", ctx.label()),
-                style,
-            ))));
+            let base = style;
+            let indices = crate::ui::fuzzy::fuzzy_match(&ctx.label(), &query)
+                .map(|(_, idx)| idx)
+                .unwrap_or_default();
+            let mut spans = vec![Span::styled("  ", base)];
+            spans.extend(crate::ui::fuzzy::highlight(&ctx.label(), &indices, base, theme.match_style()));
+            list_items.push(ListItem::new(Line::from(spans)));
             item_idx += 1;
         }
         list_items.push(ListItem::new(Line::from("")));
@@ -111,10 +114,13 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
             } else {
                 theme.surface_style().fg(theme.text)
             };
-            list_items.push(ListItem::new(Line::from(Span::styled(
-                format!("  {}", ctx.label()),
-                style,
-            ))));
+            let base = style;
+            let indices = crate::ui::fuzzy::fuzzy_match(&ctx.label(), &query)
+                .map(|(_, idx)| idx)
+                .unwrap_or_default();
+            let mut spans = vec![Span::styled("  ", base)];
+            spans.extend(crate::ui::fuzzy::highlight(&ctx.label(), &indices, base, theme.match_style()));
+            list_items.push(ListItem::new(Line::from(spans)));
             item_idx += 1;
         }
     }
@@ -131,10 +137,11 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
 }
 
 /* ============================================================================================== */
-/// Builds the filtered context list for the quick switch modal.
+/// Builds the filtered context list for the quick switch modal: fuzzy-matched
+/// against each context's label and sorted by match score (best first). An
+/// empty query returns every context in tenant order.
 pub fn build_filtered(state: &AppState, query: &str) -> Vec<AzureContext> {
-    let q = query.to_lowercase();
-    state
+    let mut scored: Vec<(i64, AzureContext)> = state
         .tenants
         .iter()
         .flat_map(|tenant| {
@@ -143,20 +150,21 @@ pub fn build_filtered(state: &AppState, query: &str) -> Vec<AzureContext> {
                 .get(&tenant.id)
                 .into_iter()
                 .flatten()
-                .filter(|sub| {
-                    if q.is_empty() {
-                        return true;
-                    }
-                    sub.name.to_lowercase().contains(&q)
-                        || tenant.tenant_display_name.to_lowercase().contains(&q)
-                        || sub.id.to_lowercase().contains(&q)
-                })
-                .map(|sub| AzureContext {
-                    tenant: tenant.clone(),
-                    subscription: sub.clone(),
+                .filter_map(move |sub| {
+                    let ctx = AzureContext {
+                        tenant: tenant.clone(),
+                        subscription: sub.clone(),
+                    };
+                    crate::ui::fuzzy::fuzzy_match(&ctx.label(), query).map(|(score, _)| (score, ctx))
                 })
         })
-        .collect()
+        .collect();
+
+    if !query.is_empty() {
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+    }
+
+    scored.into_iter().map(|(_, ctx)| ctx).collect()
 }
 
 /* ============================================================================================== */

@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{AppState, Modal, PasswordMode, View, Pane, RunPane};
+use crate::app::{AppState, CostGrouping, CostView, Modal, PasswordMode, Pane, RunPane, View};
 use crate::command::Command;
 use crate::ui::widgets::{context_switcher, quick_switch, resource_browser};
 
@@ -207,6 +207,12 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
                 .map(|scope| Command::OpenResourceActivity { scope })
         }
 
+        // Cost for the selected resource group
+        (KeyModifiers::NONE, KeyCode::Char('c')) => {
+            resource_browser::selected_resource_group_name(state)
+                .map(|rg| Command::OpenResourceGroupCost { resource_group: rg })
+        }
+
         // Search
         (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
 
@@ -272,26 +278,49 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
         (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
         (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
 
-        // Period navigation
+        // Period navigation (stays within the current view)
         (KeyModifiers::NONE, KeyCode::Char('[') | KeyCode::Char('h')) => {
-            let prev = state.cost_period.previous_month();
-            Some(Command::FetchCostSummary(prev))
+            Some(Command::FetchCostSummary {
+                period: state.cost_period.previous_month(),
+                view: state.cost_view.clone(),
+            })
         }
         (KeyModifiers::NONE, KeyCode::Char(']') | KeyCode::Char('l')) => {
-            match state.cost_period.next_month() {
-                Some(next) => Some(Command::FetchCostSummary(next)),
-                None => None, // Already at current month.
+            state.cost_period.next_month().map(|next| Command::FetchCostSummary {
+                period: next,
+                view: state.cost_view.clone(),
+            })
+        }
+
+        // Toggle subscription grouping (service <-> resource group)
+        (KeyModifiers::NONE, KeyCode::Char('g')) => Some(Command::ToggleCostGrouping),
+
+        // Drill into the selected resource group (only when grouped by RG)
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            if let CostView::Subscription(CostGrouping::ByResourceGroup) = state.cost_view {
+                crate::ui::widgets::cost_explorer::selected_row_label(state)
+                    .map(Command::DrillIntoResourceGroup)
+            } else {
+                None
             }
         }
 
-        // Refresh
-        (KeyModifiers::NONE, KeyCode::Char('r')) => {
-            Some(Command::FetchCostSummary(state.cost_period.clone()))
-        }
+        // Pop back to the subscription level
+        (KeyModifiers::NONE, KeyCode::Backspace) => Some(Command::CostScopeUp),
 
-        // Back to context switcher
+        // Refresh current view
+        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchCostSummary {
+            period: state.cost_period.clone(),
+            view: state.cost_view.clone(),
+        }),
+
+        // Esc: pop one level if drilled in; otherwise back to context switcher
         (KeyModifiers::NONE, KeyCode::Esc) => {
-            Some(Command::NavigateTo(View::ContextSwitcher))
+            if let CostView::ResourceGroup(_) = state.cost_view {
+                Some(Command::CostScopeUp)
+            } else {
+                Some(Command::NavigateTo(View::ContextSwitcher))
+            }
         }
 
         // Quick switch

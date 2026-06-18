@@ -3,9 +3,6 @@
 **/*.rs.bk
 *.pdb
 
-# Debug output
-Cargo.lock  # Remove this line if building a binary (keep for libraries)
-
 # IDEs
 .idea/
 .vscode/
@@ -35,3 +32,4 @@ lcov.info
 
 CLAUDE.md
 docs/superpowers/
+docs/proposals/

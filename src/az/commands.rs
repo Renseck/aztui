@@ -138,6 +138,35 @@ pub fn cost_query_by_resource_group(
 }
 
 /* ============================================================================================== */
+/// Returns args for `az rest` calling the Cost Management Query API for a
+/// subscription, aggregated by resource group rather than by service.
+pub fn cost_query_grouped_by_resource_group(
+    subscription_id: &str,
+    from: &str,
+    to: &str,
+) -> Vec<String> {
+    let uri = format!(
+        "https://management.azure.com/subscriptions/{}/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
+        subscription_id
+    );
+    let body = format!(
+        r#"{{"type":"Usage","timeframe":"Custom","timePeriod":{{"from":"{}T00:00:00Z","to":"{}T23:59:59Z"}},"dataset":{{"granularity":"None","aggregation":{{"totalCost":{{"name":"PreTaxCost","function":"Sum"}}}},"grouping":[{{"type":"Dimension","name":"ResourceGroupName"}}]}}}}"#,
+        from, to
+    );
+    vec![
+        "rest".to_string(),
+        "--method".to_string(),
+        "POST".to_string(),
+        "--uri".to_string(),
+        uri,
+        "--body".to_string(),
+        body,
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/* ============================================================================================== */
 /*                                       VM run-command                                           */
 /* ============================================================================================== */
 
@@ -280,5 +309,17 @@ mod tests {
         assert!(args.contains(&"--resource-group".to_string()));
         assert!(args.contains(&"rg-web".to_string()));
         assert!(!args.contains(&"--resource-id".to_string()));
+    }
+
+    #[test]
+    fn cost_query_grouped_by_rg_builds_expected_args() {
+        let args = cost_query_grouped_by_resource_group("sub-1", "2026-03-01", "2026-03-31");
+        assert_eq!(args[0], "rest");
+        assert!(args.contains(&"POST".to_string()));
+        // URI is the subscription-scoped Cost Management query endpoint.
+        assert!(args.iter().any(|a| a.contains("/subscriptions/sub-1/providers/Microsoft.CostManagement/query")));
+        // Body groups on the resource-group dimension.
+        assert!(args.iter().any(|a| a.contains("ResourceGroupName")));
+        assert!(args.iter().any(|a| a.contains("2026-03-01")));
     }
 }
