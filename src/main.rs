@@ -174,6 +174,14 @@ async fn main() -> Result<(), AppError> {
         ),
     );
 
+    let graph: Arc<dyn aztui::domain::GraphProvider> = Arc::new(
+        aztui::providers::AzGraphProvider::new(
+            Arc::clone(&executor),
+            Arc::clone(&cache),
+            config.cache.clone(),
+        ),
+    );
+
     let mut state = AppState::new(config.clone(), security);
 
     // Populate state from disk cache if available.
@@ -243,6 +251,7 @@ async fn main() -> Result<(), AppError> {
         Arc::clone(&cost),
         Arc::clone(&vm),
         Arc::clone(&activity),
+        Arc::clone(&graph),
         &theme,
         tick_duration,
     )
@@ -279,6 +288,7 @@ async fn run_loop(
     cost: Arc<dyn aztui::domain::CostProvider>,
     vm: Arc<dyn aztui::domain::VmProvider>,
     activity: Arc<dyn aztui::domain::ActivityLogProvider>,
+    graph: Arc<dyn aztui::domain::GraphProvider>,
     theme: &Theme,
     tick: Duration,
 ) -> Result<(), AppError> {
@@ -320,6 +330,7 @@ async fn run_loop(
                 Arc::clone(&cost),
                 Arc::clone(&vm),
                 Arc::clone(&activity),
+                Arc::clone(&graph),
             )
             .await;
             for ev in emitted {

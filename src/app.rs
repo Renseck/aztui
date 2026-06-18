@@ -13,6 +13,7 @@ use crate::config::AppConfig;
 use crate::domain::activity::{ActivityLogProvider, ActivityScope, ActivityWindow};
 use crate::domain::auth::{AuthProvider};
 use crate::domain::cost::CostProvider;
+use crate::domain::graph::GraphProvider;
 use crate::domain::models::{ActivityLogEntry, AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
 use crate::domain::resources::ResourceProvider;
 use crate::domain::vm::VmProvider;
@@ -383,6 +384,7 @@ pub async fn dispatch_command(
     cost: Arc<dyn CostProvider>,
     vm: Arc<dyn VmProvider>,
     activity: Arc<dyn ActivityLogProvider>,
+    graph: Arc<dyn GraphProvider>,
 ) -> Vec<Event> {
     state.last_interaction = Instant::now();
     let mut events = Vec::new();
