@@ -785,4 +785,36 @@ mod tests {
             Some("Deployment failed: resource already exists")
         );
     }
+
+    #[test]
+    fn parse_cost_query_handles_rg_grouping() {
+        let json = r#"{
+            "properties": {
+                "columns": [
+                    {"name": "PreTaxCost", "type": "Number"},
+                    {"name": "ResourceGroupName", "type": "String"},
+                    {"name": "Currency", "type": "String"}
+                ],
+                "rows": [
+                    [820.00, "rg-prod-web", "EUR"],
+                    [410.55, "rg-prod-data", "EUR"]
+                ]
+            }
+        }"#;
+        let period = CostPeriod {
+            from: "2026-03-01".to_string(),
+            to: "2026-03-31".to_string(),
+        };
+        let summary = parse_cost_query(
+            json,
+            CostScope::Subscription("sub-1".to_string()),
+            period,
+        )
+        .unwrap();
+
+        assert_eq!(summary.breakdown.len(), 2);
+        // Sorted by amount descending; the RG name lands in `label`.
+        assert_eq!(summary.breakdown[0].label, "rg-prod-web");
+        assert!((summary.total - 1230.55).abs() < 0.01);
+    }
 }
