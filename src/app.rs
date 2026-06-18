@@ -14,7 +14,7 @@ use crate::domain::activity::{ActivityLogProvider, ActivityScope, ActivityWindow
 use crate::domain::auth::{AuthProvider};
 use crate::domain::cost::CostProvider;
 use crate::domain::graph::GraphProvider;
-use crate::domain::models::{ActivityLogEntry, AzureContext, CostPeriod, CostSummary, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
+use crate::domain::models::{ActivityLogEntry, AzureContext, CostPeriod, CostSummary, GlobalResource, Resource, ResourceGroup, Subscription, Tenant, RunCommandOutput};
 use crate::domain::resources::ResourceProvider;
 use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
@@ -37,6 +37,7 @@ pub enum View {
     CostExplorer,
     RunCommand,
     ActivityLog,
+    GlobalSearch,
     Help,
 }
 
@@ -203,6 +204,7 @@ pub struct ScrollStates {
     pub context: RefCell<ListState>,
     pub resource_groups: RefCell<ListState>,
     pub resources: RefCell<ListState>,
+    pub global_search: RefCell<ListState>,
 }
 
 /* ============================================================================================== */
@@ -246,6 +248,12 @@ pub struct AppState {
     pub resource_cursor: usize,
     pub resource_browser_focus: Pane,
     pub resource_search_query: String,
+
+    // Global search (Resource Graph)
+    pub global_resources: Vec<GlobalResource>,
+    pub global_search_query: String,
+    pub global_search_cursor: usize,
+    pub pending_rg_focus: Option<String>,
 
     // Cost explorer (Phase 4)
     pub cost_summary: Option<CostSummary>,
@@ -307,6 +315,10 @@ impl AppState {
             resource_cursor: 0,
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
+            global_resources: Vec::new(),
+            global_search_query: String::new(),
+            global_search_cursor: 0,
+            pending_rg_focus: None,
             cost_summary: None,
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
@@ -1406,7 +1418,7 @@ fn key_to_input(key: crossterm::event::KeyEvent) -> Input {
 
 #[cfg(test)]
 mod nav_tests {
-    use super::clamp_increment;
+    use super::*;
 
     #[test]
     fn clamp_increment_advances_within_bounds() {
