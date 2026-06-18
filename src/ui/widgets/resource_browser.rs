@@ -142,6 +142,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
             ("/", "search"),
             ("↵", "run (VM)"),
             ("a", "activity"),
+            ("c", "costs"),
             ("r", "refresh"),
             ("Esc", "back"),
         ],
