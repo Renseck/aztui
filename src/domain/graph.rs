@@ -14,4 +14,8 @@ pub trait GraphProvider: Send + Sync {
     /// Pulls the full cross-subscription resource inventory, paginating
     /// internally until the Resource Graph result set is exhausted.
     async fn list_all_resources(&self) -> Result<Vec<GlobalResource>, AppError>;
+
+    /// Installs the `resource-graph` CLI extension (`az extension add`). Returns
+    /// once the extension is installed or an error if the install failed.
+    async fn install_resource_graph(&self) -> Result<(), AppError>;
 }

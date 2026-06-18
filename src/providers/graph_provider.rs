@@ -60,6 +60,17 @@ impl GraphProvider for AzGraphProvider {
 
         self.fetch_and_cache().await
     }
+
+    async fn install_resource_graph(&self) -> Result<(), AppError> {
+        let args = commands::extension_add("resource-graph");
+        self.executor
+            .execute(
+                &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                self.cache_config.graph_hard_ttl,
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 /* ============================================================================================== */

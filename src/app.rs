@@ -384,6 +384,7 @@ const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 const SLOT_COST: OperationId = u64::MAX - 5;
 const SLOT_RUN_COMMAND: OperationId = u64::MAX - 6;
 const SLOT_ACTIVITY: OperationId = u64::MAX - 7;
+const SLOT_GRAPH: OperationId = u64::MAX - 8;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -451,6 +452,14 @@ pub async fn dispatch_command(
                     let _ = cmd_tx.try_send(Command::FetchActivityLog);
                 }
             }
+
+            // Auto-fetch global inventory when entering global search.
+            if view == View::GlobalSearch
+                && state.global_resources.is_empty()
+                && state.active_context.is_some()
+            {
+                let _ = cmd_tx.try_send(Command::FetchGlobalInventory);
+            }
         }
 
         Command::UpdateSearch(q) => {
@@ -468,6 +477,117 @@ pub async fn dispatch_command(
 
         Command::UpdateResourceSearch(q) => {
             state.resource_search_query = q;
+        }
+
+        Command::UpdateGlobalSearch(q) => {
+            state.global_search_query = q;
+            state.global_search_cursor = 0;
+        }
+
+        Command::FetchGlobalInventory => {
+            abort_slot(state, SLOT_GRAPH);
+            let op_id = SLOT_GRAPH;
+            let tx = cmd_tx.clone();
+            let graph = Arc::clone(&graph);
+
+            let handle = tokio::spawn(async move {
+                let result = graph.list_all_resources().await;
+                let _ = tx.send(Command::GlobalInventoryResult(result)).await;
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: "Loading global resource inventory...".to_string(),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::GlobalInventoryResult(result) => {
+            state.pending_operations.remove(&SLOT_GRAPH);
+            events.push(Event::OperationCompleted(SLOT_GRAPH));
+            match result {
+                Ok(rows) => {
+                    state.global_resources = rows;
+                    state.global_search_cursor = 0;
+                }
+                Err(e) => {
+                    state.last_error = Some(e.clone());
+                    events.push(Event::ErrorOccurred(e));
+                }
+            }
+        }
+
+        Command::InstallExtension(name) => {
+            state.modal = None;
+            abort_slot(state, SLOT_GRAPH);
+            let op_id = SLOT_GRAPH;
+            let tx = cmd_tx.clone();
+            let graph = Arc::clone(&graph);
+
+            let handle = tokio::spawn(async move {
+                match graph.install_resource_graph().await {
+                    Ok(()) => { let _ = tx.send(Command::FetchGlobalInventory).await; }
+                    Err(e) => { let _ = tx.send(Command::GlobalInventoryResult(Err(e))).await; }
+                }
+            })
+            .abort_handle();
+
+            let op = PendingOperation {
+                id: op_id,
+                description: format!("Installing {} extension...", name),
+                started_at: Instant::now(),
+                abort_handle: Some(handle),
+            };
+            events.push(Event::OperationStarted(op.clone()));
+            state.pending_operations.insert(op_id, op);
+        }
+
+        Command::OpenGlobalResource => {
+            let row = match crate::ui::widgets::global_search::selected_global_resource(state) {
+                Some(r) => r.clone(),
+                None => return events,
+            };
+
+            if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
+                let _ = cmd_tx.try_send(Command::OpenRunCommand {
+                    subscription_id: row.subscription_id.clone(),
+                    resource_group: row.resource_group.clone(),
+                    vm_name: row.name.clone(),
+                });
+                return events;
+            }
+
+            // Non-VM: resolve full context, switch, then drill into the RG.
+            let ctx = state
+                .subscriptions_by_tenant
+                .values()
+                .flatten()
+                .find(|s| s.id == row.subscription_id)
+                .and_then(|sub| {
+                    state.tenants.iter().find(|t| t.id == sub.tenant_id).map(|tenant| {
+                        AzureContext { tenant: tenant.clone(), subscription: sub.clone() }
+                    })
+                });
+
+            match ctx {
+                Some(ctx) => {
+                    state.pending_rg_focus = Some(row.resource_group.clone());
+                    let _ = cmd_tx.try_send(Command::SwitchContext(ctx));
+                    let _ = cmd_tx.try_send(Command::NavigateTo(View::ResourceBrowser));
+                }
+                None => {
+                    let err = AppError::new(
+                        ErrorKind::SubscriptionNotFound,
+                        "That resource's subscription is not in your context list",
+                    );
+                    state.last_error = Some(err.clone());
+                    events.push(Event::ErrorOccurred(err));
+                }
+            }
         }
 
         Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
@@ -1193,8 +1313,14 @@ pub async fn dispatch_command(
                     state.resource_cursor = 0;
                     events.push(Event::ResourceGroupsLoaded(groups));
 
-                    // Auto-load resources for the first group.
-                    if let Some(first) = state.resource_groups.first() {
+                    // If a global-search drill-in requested a specific RG, focus it;
+                    // otherwise auto-load the first group as before.
+                    if let Some(target) = state.pending_rg_focus.take() {
+                        if let Some(idx) = state.resource_groups.iter().position(|g| g.name == target) {
+                            state.resource_group_cursor = idx;
+                        }
+                        let _ = cmd_tx.try_send(Command::ListResources(target));
+                    } else if let Some(first) = state.resource_groups.first() {
                         let _ = cmd_tx.try_send(Command::ListResources(first.name.clone()));
                     }
                 }
@@ -1373,6 +1499,29 @@ pub(crate) fn clamp_increment(cursor: usize, len: usize) -> usize {
     }
 }
 
+/* ============================================================================================== */
+/// Decides what a global-search `Enter` does for `row`. VMs open the run-command
+/// view directly (works cross-subscription because the run-command passes
+/// `--subscription` explicitly). Any other type switches the active context to
+/// the row's subscription (when it is present in `ctx`), after which the caller
+/// drives the resource-browser drill-in.
+pub(crate) fn global_resource_command(
+    row: &crate::domain::models::GlobalResource,
+    ctx: Option<&AzureContext>,
+) -> Command {
+    if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
+        return Command::OpenRunCommand {
+            subscription_id: row.subscription_id.clone(),
+            resource_group: row.resource_group.clone(),
+            vm_name: row.name.clone(),
+        };
+    }
+    match ctx {
+        Some(c) => Command::SwitchContext(c.clone()),
+        None => Command::UpdateGlobalSearch(row.subscription_id.clone()), // unreachable in practice; placeholder routing
+    }
+}
+
 fn abort_slot(state: &mut AppState, slot_id: OperationId) {
     if let Some(op) = state.pending_operations.remove(&slot_id) {
         if let Some(handle) = op.abort_handle {
@@ -1419,6 +1568,43 @@ fn key_to_input(key: crossterm::event::KeyEvent) -> Input {
 #[cfg(test)]
 mod nav_tests {
     use super::*;
+    use crate::command::Command;
+    use crate::domain::models::{GlobalResource, SubscriptionState};
+
+    fn vm_row() -> GlobalResource {
+        GlobalResource {
+            id: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/web-01".into(),
+            name: "web-01".into(),
+            resource_type: "microsoft.compute/virtualmachines".into(),
+            resource_group: "rg".into(),
+            subscription_id: "s".into(),
+            location: "westeurope".into(),
+        }
+    }
+
+    #[test]
+    fn vm_row_routes_to_open_run_command() {
+        let cmd = global_resource_command(&vm_row(), None);
+        match cmd {
+            Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
+                assert_eq!(subscription_id, "s");
+                assert_eq!(resource_group, "rg");
+                assert_eq!(vm_name, "web-01");
+            }
+            other => panic!("expected OpenRunCommand, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn non_vm_row_routes_to_switch_context_when_context_resolvable() {
+        let row = GlobalResource { resource_type: "microsoft.storage/storageaccounts".into(), ..vm_row() };
+        let ctx = AzureContext {
+            tenant: Tenant { id: "t".into(), tenant_display_name: "T".into(), tenant_default_domain: "d".into() },
+            subscription: Subscription { id: "s".into(), name: "S".into(), tenant_id: "t".into(), state: SubscriptionState::Enabled },
+        };
+        let cmd = global_resource_command(&row, Some(&ctx));
+        assert!(matches!(cmd, Command::SwitchContext(_)));
+    }
 
     #[test]
     fn clamp_increment_advances_within_bounds() {
@@ -1436,5 +1622,14 @@ mod nav_tests {
     fn clamp_increment_handles_empty_list() {
         assert_eq!(clamp_increment(0, 0), 0);
         assert_eq!(clamp_increment(7, 0), 0);
+    }
+
+    #[test]
+    fn new_state_has_empty_global_search() {
+        let state = AppState::new(AppConfig::default(), SecurityManager::disabled());
+        assert!(state.global_resources.is_empty());
+        assert_eq!(state.global_search_query, "");
+        assert_eq!(state.global_search_cursor, 0);
+        assert!(state.pending_rg_focus.is_none());
     }
 }

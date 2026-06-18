@@ -264,3 +264,24 @@ impl SecurityManager {
         Ok(())
     }
 }
+
+/* ============================================================================================== */
+/*                                          Test helpers                                          */
+/* ============================================================================================== */
+
+#[cfg(test)]
+impl SecurityManager {
+    /// Test-only constructor: a disabled security manager (no master password,
+    /// all encrypt/decrypt operations passthrough) with no disk interaction.
+    /// Mirrors the state produced by [`SecurityManager::new`] with
+    /// `master_password_enabled = false`, without loading anything from disk.
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            data_dir: PathBuf::from("."),
+            stored_params: None,
+            key: None,
+            use_keyring: false,
+        }
+    }
+}

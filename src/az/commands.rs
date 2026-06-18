@@ -267,6 +267,19 @@ pub fn graph_query(kql: &str, first: u32, skip_token: Option<&str>) -> Vec<Strin
 }
 
 /* ============================================================================================== */
+/// Returns args for `az extension add --name resource-graph --output json`.
+pub fn extension_add(name: &str) -> Vec<String> {
+    vec![
+        "extension".to_string(),
+        "add".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/* ============================================================================================== */
 /*                                              Tests                                             */
 /* ============================================================================================== */
 

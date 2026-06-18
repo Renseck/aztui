@@ -15,9 +15,11 @@ use crate::ui::widgets::SPINNER_CHARS;
 /// ARM resource type for a virtual machine.
 pub const VM_RESOURCE_TYPE: &str = "Microsoft.Compute/virtualMachines";
 
-/// Returns true if the given ARM resource type is a virtual machine.
+/// Returns true if the given ARM resource type is a virtual machine. Comparison
+/// is case-insensitive because Azure Resource Graph returns the `type` column
+/// lowercased, while ARM list APIs return it PascalCased.
 pub fn is_vm(resource_type: &str) -> bool {
-    resource_type == VM_RESOURCE_TYPE
+    resource_type.eq_ignore_ascii_case(VM_RESOURCE_TYPE)
 }
 
 /* ============================================================================================== */
@@ -510,6 +512,7 @@ mod tests {
     #[test]
     fn is_vm_true_for_virtual_machine_type() {
         assert!(is_vm("Microsoft.Compute/virtualMachines"));
+        assert!(is_vm("microsoft.compute/virtualmachines"));
     }
 
     #[test]

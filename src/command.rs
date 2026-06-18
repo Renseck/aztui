@@ -136,6 +136,24 @@ pub enum Command {
     #[doc(hidden)]
     ActivityLogResult(Result<Vec<crate::domain::models::ActivityLogEntry>, AppError>),
 
+    /* ===================================== Global search ===================================== */
+
+    /// Fetch the full cross-subscription inventory via Resource Graph.
+    FetchGlobalInventory,
+
+    /// Update the global-search fuzzy query.
+    UpdateGlobalSearch(String),
+
+    /// Open the selected global-search result (type-aware routing).
+    OpenGlobalResource,
+
+    /// Install a missing `az` CLI extension by name, then retry global search.
+    InstallExtension(String),
+
+    /// Delivered when the global inventory fetch completes.
+    #[doc(hidden)]
+    GlobalInventoryResult(Result<Vec<crate::domain::models::GlobalResource>, AppError>),
+
     /* ======================================== Security ======================================== */
 
     Lock,
