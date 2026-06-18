@@ -104,6 +104,10 @@ pub struct CacheConfig {
     pub cost_soft_ttl: Duration,
     #[serde(with = "duration_secs")]
     pub cost_hard_ttl: Duration,
+    #[serde(with = "duration_secs")]
+    pub graph_soft_ttl: Duration,
+    #[serde(with = "duration_secs")]
+    pub graph_hard_ttl: Duration,
 }
 
 impl Default for CacheConfig {
@@ -115,6 +119,8 @@ impl Default for CacheConfig {
             resource_hard_ttl: Duration::from_secs(300),
             cost_soft_ttl: Duration::from_secs(300),
             cost_hard_ttl: Duration::from_secs(1800),
+            graph_soft_ttl: Duration::from_secs(300),
+            graph_hard_ttl: Duration::from_secs(1800),
         }
     }
 }
@@ -244,5 +250,20 @@ mod tests {
         let toml = "[ui]\nscroll_off = 5\n";
         let cfg: AppConfig = toml::from_str(toml).unwrap();
         assert_eq!(cfg.ui.scroll_off, 5);
+    }
+
+    #[test]
+    fn graph_ttls_default_to_300_and_1800() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.cache.graph_soft_ttl, std::time::Duration::from_secs(300));
+        assert_eq!(cfg.cache.graph_hard_ttl, std::time::Duration::from_secs(1800));
+    }
+
+    #[test]
+    fn graph_ttls_parse_from_toml() {
+        let toml = "[cache]\ngraph_soft_ttl = 120\ngraph_hard_ttl = 600\n";
+        let cfg: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.cache.graph_soft_ttl, std::time::Duration::from_secs(120));
+        assert_eq!(cfg.cache.graph_hard_ttl, std::time::Duration::from_secs(600));
     }
 }

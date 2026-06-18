@@ -1,11 +1,13 @@
 pub mod activity_provider;
 pub mod auth_provider;
 pub mod cost_provider;
+pub mod graph_provider;
 pub mod resource_provider;
 pub mod vm_provider;
 
 pub use activity_provider::AzActivityLogProvider;
 pub use auth_provider::AzAuthProvider; 
 pub use cost_provider::AzCostProvider;
+pub use graph_provider::AzGraphProvider;
 pub use resource_provider::AzResourceProvider;
 pub use vm_provider::AzVmProvider;
