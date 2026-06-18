@@ -133,12 +133,11 @@ pub fn total_selectable(state: &AppState) -> usize {
             .map(|v| v.len())
             .sum()
     } else {
-        let q = state.search_query.to_lowercase();
         state
             .subscriptions_by_tenant
             .values()
             .flatten()
-            .filter(|s| matches_query(s, &q))
+            .filter(|s| matches_query(s, &state.search_query))
             .count()
     }
 }
@@ -173,12 +172,12 @@ pub fn selected_context(state: &AppState) -> Option<crate::domain::models::Azure
 
 fn build_flat_list<'a>(state: &'a AppState) -> Vec<ContextItem<'a>> {
     let mut items = Vec::new();
-    let query = if state.search_query.is_empty() {
+    let query: Option<&str> = if state.search_query.is_empty() {
         None
     } else {
-        Some(state.search_query.to_lowercase())
+        Some(state.search_query.as_str())
     };
-    
+
     let mut sub_index = 0usize;
 
     for tenant in &state.tenants {
@@ -189,11 +188,7 @@ fn build_flat_list<'a>(state: &'a AppState) -> Vec<ContextItem<'a>> {
 
         let filtered_subs: Vec<&Subscription> = subs
             .iter()
-            .filter(|s| {
-                query
-                    .as_ref()
-                    .map_or(true, |q| matches_query(s, q))
-            })
+            .filter(|s| query.map_or(true, |q| matches_query(s, q)))
             .collect();
 
         if filtered_subs.is_empty() {
@@ -217,7 +212,7 @@ fn build_flat_list<'a>(state: &'a AppState) -> Vec<ContextItem<'a>> {
 
 /* ============================================================================================== */
 fn matches_query(sub: &Subscription, query: &str) -> bool {
-    sub.name.to_lowercase().contains(query) || sub.id.to_lowercase().contains(query)
+    crate::ui::fuzzy::fuzzy_match(&sub.name, query).is_some()
 }
 
 /* ============================================================================================== */
@@ -266,28 +261,36 @@ fn render_item<'a>(
             let prefix = if is_selected { "    [» " } else { "       " };
             let suffix = if is_selected && is_enabled { " ]" } else { "  " };
 
-            // Pad name + suffix to align the status column.
-            // Prefix (7) + name + suffix (2) + padding -> consistent width
-            let name_with_suffix = format!("{}{}{}", prefix, sub.name, suffix);
+            // Build the name span(s) with fuzzy-match highlighting on the name
+            // itself, keeping the prefix / suffix / padding for column alignment.
             let padded_width = 7 + max_name_len + 2 + 2; // prefix + max name + suffix + gap
-            let name_padded = format!("{:<width$}", name_with_suffix, width = padded_width);
+            let consumed = prefix.chars().count() + sub.name.chars().count() + suffix.chars().count();
+            let pad = padded_width.saturating_sub(consumed);
 
             let active_marker = if is_active { "  ( ● active )" } else { "" };
 
-            let name_span = if is_enabled {
-                Span::styled(
-                    name_padded,
-                    if is_active {
-                        theme.active_context_style()
-                    } else if is_selected {
-                        theme.selected_style()
-                    } else {
-                        theme.surface_style().fg(theme.text)
-                    },
-                )
+            let mut name_spans: Vec<Span> = Vec::new();
+            if is_enabled {
+                let name_style = if is_active {
+                    theme.active_context_style()
+                } else if is_selected {
+                    theme.selected_style()
+                } else {
+                    theme.surface_style().fg(theme.text)
+                };
+                let indices = crate::ui::fuzzy::fuzzy_match(&sub.name, &state.search_query)
+                    .map(|(_, idx)| idx)
+                    .unwrap_or_default();
+                name_spans.push(Span::styled(prefix.to_string(), name_style));
+                name_spans.extend(crate::ui::fuzzy::highlight(&sub.name, &indices, name_style, theme.match_style()));
+                name_spans.push(Span::styled(format!("{}{}", suffix, " ".repeat(pad)), name_style));
             } else {
-                Span::styled(name_padded, theme.dimmed_style())
-            };
+                let dim = theme.dimmed_style();
+                name_spans.push(Span::styled(
+                    format!("{}{}{}{}", prefix, sub.name, suffix, " ".repeat(pad)),
+                    dim,
+                ));
+            }
 
             let state_label = format!("{}", sub.state);
 
@@ -307,7 +310,10 @@ fn render_item<'a>(
                 theme.active_context_style(),
             );
 
-            ListItem::new(Line::from(vec![name_span, state_span, active_span]))
+            let mut all_spans = name_spans;
+            all_spans.push(state_span);
+            all_spans.push(active_span);
+            ListItem::new(Line::from(all_spans))
         }
     }
 }
