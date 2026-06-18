@@ -41,6 +41,26 @@ pub enum View {
 
 /* ============================================================================================== */
 
+/// How the subscription-level cost breakdown is grouped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostGrouping {
+    ByService,
+    ByResourceGroup,
+}
+
+/* ============================================================================================== */
+
+/// What the cost explorer is currently showing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostView {
+    /// Whole-subscription cost, grouped by service or by resource group.
+    Subscription(CostGrouping),
+    /// Cost for a single resource group (always broken down by service).
+    ResourceGroup(String),
+}
+
+/* ============================================================================================== */
+
 /// Overlay modal state. `Confirm.on_confirm` is boxed to break the recursive
 /// type cycle with [`Command`].
 #[derive(Debug, Clone)]
@@ -230,6 +250,7 @@ pub struct AppState {
     pub cost_summary: Option<CostSummary>,
     pub cost_period: CostPeriod,
     pub cost_selected_index: usize,
+    pub cost_view: CostView,
 
     // Run Command
     pub run_command: Option<RunCommandSession>,
@@ -288,6 +309,7 @@ impl AppState {
             cost_summary: None,
             cost_period: CostPeriod::current_month(),
             cost_selected_index: 0,
+            cost_view: CostView::Subscription(CostGrouping::ByService),
             run_command: None,
             activity: None,
             pending_operations: HashMap::new(),
