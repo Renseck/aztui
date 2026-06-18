@@ -205,6 +205,7 @@ pub fn render_error_detail(frame: &mut Frame, state: &AppState, theme: &Theme) {
             crate::errors::RecoveryAction::Retry(_) => "Action: Retry the operation".to_string(),
             crate::errors::RecoveryAction::OpenSettings => "Action: Open settings".to_string(),
             crate::errors::RecoveryAction::Manual(hint) => hint.clone(),
+            crate::errors::RecoveryAction::InstallExtension(hint) => hint.clone(),
         };
         lines.push(Line::from(Span::styled(
             format!("Suggested: {}", hint),

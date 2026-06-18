@@ -90,7 +90,7 @@ impl AzCliExecutor for SubprocessCliExecutor {
                 })
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                Err(AppError::cli_execution_failed(stderr))
+                Err(crate::errors::error_from_cli_stderr(&stderr))
             }
         })
         .await;

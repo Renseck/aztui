@@ -241,6 +241,45 @@ pub fn activity_log_list(scope: &ActivityScope, window: ActivityWindow) -> Vec<S
 }
 
 /* ============================================================================================== */
+/*                                       Resource Graph                                           */
+/* ============================================================================================== */
+
+/// Returns args for `az graph query -q "<kql>" --first <n> [--skip-token <tok>]
+/// --output json`. Requires the `resource-graph` CLI extension; a missing
+/// extension surfaces as [`crate::errors::ErrorKind::CliExtensionMissing`] from
+/// the executor.
+pub fn graph_query(kql: &str, first: u32, skip_token: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "graph".to_string(),
+        "query".to_string(),
+        "-q".to_string(),
+        kql.to_string(),
+        "--first".to_string(),
+        first.to_string(),
+    ];
+    if let Some(tok) = skip_token {
+        args.push("--skip-token".to_string());
+        args.push(tok.to_string());
+    }
+    args.push("--output".to_string());
+    args.push("json".to_string());
+    args
+}
+
+/* ============================================================================================== */
+/// Returns args for `az extension add --name resource-graph --output json`.
+pub fn extension_add(name: &str) -> Vec<String> {
+    vec![
+        "extension".to_string(),
+        "add".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "--output".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/* ============================================================================================== */
 /*                                              Tests                                             */
 /* ============================================================================================== */
 
@@ -321,5 +360,27 @@ mod tests {
         // Body groups on the resource-group dimension.
         assert!(args.iter().any(|a| a.contains("ResourceGroupName")));
         assert!(args.iter().any(|a| a.contains("2026-03-01")));
+    }
+
+    #[test]
+    fn graph_query_builds_args_without_skip_token() {
+        let args = graph_query("Resources | project name", 1000, None);
+        assert_eq!(
+            args,
+            vec![
+                "graph", "query",
+                "-q", "Resources | project name",
+                "--first", "1000",
+                "--output", "json",
+            ]
+        );
+    }
+
+    #[test]
+    fn graph_query_includes_skip_token_when_present() {
+        let args = graph_query("Resources", 500, Some("tok-abc"));
+        assert!(args.contains(&"--skip-token".to_string()));
+        assert!(args.contains(&"tok-abc".to_string()));
+        assert!(args.contains(&"500".to_string()));
     }
 }

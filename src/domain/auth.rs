@@ -31,8 +31,9 @@ pub trait AuthProvider: Send + Sync {
 
     /* ========================================================================================== */
 
-    /// Set the active subscription in AZ CLI.
-    async fn set_subscription(&self, subscription_id: &str) -> Result<(), AppError>;
+    /// Sets the active subscription. `tenant_id` is used only to enrich a
+    /// failure with a "log in to this tenant" recovery action.
+    async fn set_subscription(&self, subscription_id: &str, tenant_id: &str) -> Result<(), AppError>;
 
     /* ========================================================================================== */
 

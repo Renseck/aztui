@@ -11,7 +11,7 @@ use crate::cache::store::{CacheKey, CacheStore};
 use crate::config::CacheConfig;
 use crate::domain::auth::AuthProvider;
 use crate::domain::models::{AzureContext, Subscription, Tenant};
-use crate::errors::{AppError, ErrorKind};
+use crate::errors::{AppError, ErrorKind, RecoveryAction};
 
 const _TENANTS_CACHE_KIND: &str = "tenants";
 const CONTEXT_LIST_CACHE_KIND: &str = "context_list";
@@ -96,15 +96,23 @@ impl AuthProvider for AzAuthProvider {
     }
 
     /* ========================================================================================== */
-    async fn set_subscription(&self, subscription_id: &str) -> Result<(), AppError> {
+    async fn set_subscription(&self, subscription_id: &str, tenant_id: &str) -> Result<(), AppError> {
         let args = commands::account_set(subscription_id);
-        self.executor
+        let result = self
+            .executor
             .execute(
                 &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                 self.cache_config.context_soft_ttl,
             )
-            .await?;
-        Ok(())
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::AuthExpired) => {
+                Err(e.with_recovery(RecoveryAction::LoginToTenant(tenant_id.to_string())))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /* ========================================================================================== */
@@ -147,5 +155,57 @@ impl AzAuthProvider {
         );
 
         Ok(result)
+    }
+}
+
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use async_trait::async_trait;
+    use crate::az::executor::AzCliExecutor;
+    use crate::errors::RecoveryAction;
+
+    /// Executor that always fails with a not-logged-in stderr.
+    struct NotLoggedInExecutor;
+
+    #[async_trait]
+    impl AzCliExecutor for NotLoggedInExecutor {
+        async fn execute(&self, _args: &[&str], _dur: Duration) -> Result<String, AppError> {
+            Err(crate::errors::error_from_cli_stderr("ERROR: Please run 'az login'"))
+        }
+    }
+
+    fn provider_with(exec: Arc<dyn AzCliExecutor>) -> AzAuthProvider {
+        AzAuthProvider::new(
+            exec,
+            Arc::new(RwLock::new(CacheStore::new())),
+            CacheConfig::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn set_subscription_attaches_login_to_tenant_on_auth_failure() {
+        let provider = provider_with(Arc::new(NotLoggedInExecutor));
+        let err = provider
+            .set_subscription("sub-1", "tenant-9")
+            .await
+            .unwrap_err();
+        match err.recovery {
+            Some(RecoveryAction::LoginToTenant(t)) => assert_eq!(t, "tenant-9"),
+            other => panic!("expected LoginToTenant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_active_context_maps_auth_failure_to_none() {
+        let provider = provider_with(Arc::new(NotLoggedInExecutor));
+        let ctx = provider.get_active_context().await.unwrap();
+        assert!(ctx.is_none());
     }
 }

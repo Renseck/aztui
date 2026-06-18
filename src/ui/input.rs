@@ -28,6 +28,7 @@ pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     if state.search_focused {
         return match state.active_view {
             View::ResourceBrowser => handle_resource_search_input(key, state),
+            View::GlobalSearch => handle_global_search_input(key, state),
             _ => handle_search_input(key, state),
         };
     }
@@ -59,6 +60,11 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     // Activity log view has its own keybindings.
     if state.active_view == View::ActivityLog {
         return handle_activity_log_input(key, state);
+    }
+
+    // Global search view has its own keybindings.
+    if state.active_view == View::GlobalSearch {
+        return handle_global_search_input(key, state);
     }
 
     match (key.modifiers, key.code) {
@@ -121,6 +127,7 @@ fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         }
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
         (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
+        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
 
         _ => None
     }
@@ -242,6 +249,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
         (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
+        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
 
         _ => None,
     }
@@ -341,6 +349,7 @@ fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
         (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
+        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
 
         _ => None,
     }
@@ -446,7 +455,67 @@ fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command>
         (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
         (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
         (KeyModifiers::NONE, KeyCode::Char('4')) => None, // already here
+        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
 
+        _ => None,
+    }
+}
+
+/* ============================================================================================== */
+fn handle_global_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    // Search-entry mode. Esc/Enter commit the filter and drop back to list
+    // navigation (the query stays applied); arrows move the selection while
+    // still in the search box; `/` is ignored so it never types a literal slash.
+    if state.search_focused {
+        return match key.code {
+            KeyCode::Esc | KeyCode::Enter => Some(Command::SetGlobalSearchFocus(false)),
+            KeyCode::Up => Some(Command::NavUp),
+            KeyCode::Down => Some(Command::NavDown),
+            KeyCode::Char('/') => None,
+            KeyCode::Backspace => {
+                let mut q = state.global_search_query.clone();
+                q.pop();
+                Some(Command::UpdateGlobalSearch(q))
+            }
+            KeyCode::Char(c) => {
+                let mut q = state.global_search_query.clone();
+                q.push(c);
+                Some(Command::UpdateGlobalSearch(q))
+            }
+            _ => None,
+        };
+    }
+
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
+        (KeyModifiers::NONE, KeyCode::Enter) => Some(Command::OpenGlobalResource),
+        // `/` focuses the search input, keeping any existing query so it can be refined.
+        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::SetGlobalSearchFocus(true)),
+        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchGlobalInventory),
+        // Esc clears an active filter first; with no filter, it backs out to the context switcher.
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            if state.global_search_query.is_empty() {
+                Some(Command::NavigateTo(View::ContextSwitcher))
+            } else {
+                Some(Command::UpdateGlobalSearch(String::new()))
+            }
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            let filtered = quick_switch::build_filtered(state, "");
+            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
+                query: String::new(),
+                filtered,
+                cursor: 0,
+            })))
+        }
+        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
+        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
+        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
+        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
+        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
+        (KeyModifiers::NONE, KeyCode::Char('5')) => None, // already here
         _ => None,
     }
 }
