@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::domain::{ActivityLogEntry, CostLineItem, CostPeriod, CostScope, CostSummary, Resource, ResourceGroup, RunCommandOutput};
-use crate::domain::models::{AzureContext, Subscription, SubscriptionState, Tenant};
+use crate::domain::models::{AzureContext, GlobalResource, Subscription, SubscriptionState, Tenant};
 use crate::errors::AppError;
 
 /* ============================================================================================== */
@@ -138,6 +138,31 @@ struct RawActivityEntry {
 }
 
 /* ============================================================================================== */
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawGraphResource {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    resource_type: String,
+    #[serde(default)]
+    resource_group: String,
+    subscription_id: String,
+    #[serde(default)]
+    location: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawGraphResponse {
+    #[serde(default)]
+    data: Vec<RawGraphResource>,
+    #[serde(rename = "skipToken", default)]
+    skip_token: Option<String>,
+    #[serde(rename = "$skipToken", default)]
+    skip_token_alt: Option<String>,
+}
+
+/* ============================================================================================== */
 /*                                    Public parsing functions                                    */
 /* ============================================================================================== */
 
@@ -262,6 +287,40 @@ pub fn parse_resource_group_list(
 
     groups.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(groups)
+}
+
+/* ============================================================================================== */
+/// Parses one page of `az graph query` output into [`GlobalResource`] rows plus
+/// the next skip token (or `None` when the result set is exhausted). Azure
+/// Resource Graph spells the continuation token either `skipToken` or
+/// `$skipToken` depending on `az` version; both are accepted.
+///
+/// # Errors
+/// Returns [`AppError`] with [`ErrorKind::CliParseError`] if the JSON does not
+/// match the expected Resource Graph shape.
+pub fn parse_graph_rows(json: &str) -> Result<(Vec<GlobalResource>, Option<String>), AppError> {
+    let resp: RawGraphResponse = serde_json::from_str(json)
+        .map_err(|e| AppError::cli_parse_error(format!("graph query: {}", e)))?;
+
+    let rows = resp
+        .data
+        .into_iter()
+        .map(|r| GlobalResource {
+            id: r.id,
+            name: r.name,
+            resource_type: r.resource_type,
+            resource_group: r.resource_group,
+            subscription_id: r.subscription_id,
+            location: r.location,
+        })
+        .collect();
+
+    let token = resp
+        .skip_token
+        .or(resp.skip_token_alt)
+        .filter(|t| !t.is_empty());
+
+    Ok((rows, token))
 }
 
 /* ========================================== Activity ========================================== */
@@ -816,5 +875,45 @@ mod tests {
         // Sorted by amount descending; the RG name lands in `label`.
         assert_eq!(summary.breakdown[0].label, "rg-prod-web");
         assert!((summary.total - 1230.55).abs() < 0.01);
+    }
+
+    #[test]
+    fn parses_rows_and_skip_token() {
+        let json = r#"{
+            "data": [
+                {"id":"/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/web-01",
+                 "name":"web-01","type":"microsoft.compute/virtualmachines",
+                 "resourceGroup":"rg","subscriptionId":"s","location":"westeurope"}
+            ],
+            "skipToken": "next-page-token",
+            "count": 1
+        }"#;
+        let (rows, token) = parse_graph_rows(json).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "web-01");
+        assert_eq!(rows[0].subscription_id, "s");
+        assert_eq!(token.as_deref(), Some("next-page-token"));
+    }
+
+    #[test]
+    fn final_page_has_no_skip_token() {
+        let json = r#"{"data":[],"count":0}"#;
+        let (rows, token) = parse_graph_rows(json).unwrap();
+        assert!(rows.is_empty());
+        assert!(token.is_none());
+    }
+
+    #[test]
+    fn accepts_dollar_skip_token_spelling() {
+        let json = r#"{"data":[],"$skipToken":"abc"}"#;
+        let (_rows, token) = parse_graph_rows(json).unwrap();
+        assert_eq!(token.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn null_skip_token_is_none() {
+        let json = r#"{"data":[],"skipToken":null}"#;
+        let (_rows, token) = parse_graph_rows(json).unwrap();
+        assert!(token.is_none());
     }
 }
