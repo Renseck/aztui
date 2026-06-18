@@ -226,10 +226,20 @@ fn render_left_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &The
                 theme.surface_style().fg(theme.text)
             };
             let location = abbreviate_location(&rg.location);
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{}{}", prefix, rg.name), style),
-                Span::styled(format!("  {}", location), theme.surface_style().fg(theme.subtle)),
-            ]))
+
+            // Only highlight when this pane owns the query (the query field is
+            // shared between panes), matching the filter's focus gating.
+            let q = if is_focused { state.resource_search_query.as_str() } else { "" };
+            let indices = crate::ui::fuzzy::fuzzy_match(&rg.name, q)
+                .map(|(_, idx)| idx)
+                .unwrap_or_default();
+            let mut spans = vec![Span::styled(prefix.to_string(), style)];
+            spans.extend(crate::ui::fuzzy::highlight(&rg.name, &indices, style, theme.match_style()));
+            spans.push(Span::styled(
+                format!("  {}", location),
+                theme.surface_style().fg(theme.subtle),
+            ));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -340,11 +350,19 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
                 theme.surface_style().fg(theme.azure_light)
             };
 
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{}{}", prefix, res.name), name_style),
-                Span::styled(format!("  {}", abbrev_type), type_style),
-                Span::styled(format!("  {}", location), theme.surface_style().fg(theme.subtle)),
-            ]))
+            // Focus-gate the highlight query (shared field between panes).
+            let q = if is_focused { state.resource_search_query.as_str() } else { "" };
+            let indices = crate::ui::fuzzy::fuzzy_match(&res.name, q)
+                .map(|(_, idx)| idx)
+                .unwrap_or_default();
+            let mut spans = vec![Span::styled(prefix.to_string(), name_style)];
+            spans.extend(crate::ui::fuzzy::highlight(&res.name, &indices, name_style, theme.match_style()));
+            spans.push(Span::styled(format!("  {}", abbrev_type), type_style));
+            spans.push(Span::styled(
+                format!("  {}", location),
+                theme.surface_style().fg(theme.subtle),
+            ));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -377,23 +395,26 @@ pub fn selected_resource_group_name(state: &AppState) -> Option<String> {
 }
 
 /* ============================================================================================== */
-/// Returns filtered resource groups based on the search query (when left pane is focused).
+/// Returns resource groups fuzzy-matched against the search query (when the
+/// left pane is focused), sorted by match score. Empty query keeps source order.
 pub fn filtered_resource_groups(state: &AppState) -> Vec<&ResourceGroup> {
-    let query = if state.resource_browser_focus == Pane::Left && !state.resource_search_query.is_empty() {
-        Some(state.resource_search_query.to_lowercase())
+    let query = if state.resource_browser_focus == Pane::Left {
+        state.resource_search_query.as_str()
     } else {
-        None
+        ""
     };
 
-    state
+    let mut scored: Vec<(i64, &ResourceGroup)> = state
         .resource_groups
         .iter()
-        .filter(|rg| {
-            query
-                .as_ref()
-                .map_or(true, |q| rg.name.to_lowercase().contains(q))
-        })
-        .collect()
+        .filter_map(|rg| crate::ui::fuzzy::fuzzy_match(&rg.name, query).map(|(s, _)| (s, rg)))
+        .collect();
+
+    if !query.is_empty() {
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+    }
+
+    scored.into_iter().map(|(_, rg)| rg).collect()
 }
 
 /// Builds the [`ActivityScope`] for the current resource-browser selection:
@@ -451,24 +472,31 @@ pub fn selected_vm_target(state: &AppState) -> Option<VmTarget> {
 
 /* ============================================================================================== */
 
-/// Returns filtered resources based on the search query (when right pane is focused).
+/// Returns resources fuzzy-matched against the search query (when the right
+/// pane is focused), sorted by match score. The match haystack includes the
+/// resource type so type searches (e.g. "storage") still work. Empty query
+/// keeps source order.
 pub fn filtered_resources(state: &AppState) -> Vec<&Resource> {
-    let query = if state.resource_browser_focus == Pane::Right && !state.resource_search_query.is_empty() {
-        Some(state.resource_search_query.to_lowercase())
+    let query = if state.resource_browser_focus == Pane::Right {
+        state.resource_search_query.as_str()
     } else {
-        None
+        ""
     };
 
-    state
+    let mut scored: Vec<(i64, &Resource)> = state
         .resources
         .iter()
-        .filter(|r| {
-            query.as_ref().map_or(true, |q| {
-                r.name.to_lowercase().contains(q)
-                    || r.resource_type.to_lowercase().contains(q)
-            })
+        .filter_map(|r| {
+            let haystack = format!("{} {}", r.name, r.resource_type);
+            crate::ui::fuzzy::fuzzy_match(&haystack, query).map(|(s, _)| (s, r))
         })
-        .collect()
+        .collect();
+
+    if !query.is_empty() {
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+    }
+
+    scored.into_iter().map(|(_, r)| r).collect()
 }
 
 /* ============================================================================================== */
