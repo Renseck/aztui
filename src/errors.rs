@@ -27,6 +27,7 @@ pub enum ErrorKind {
     CliExecutionFailed,
     CliTimeout,
     CliParseError,
+    CliExtensionMissing,
 
     // Network
     NetworkError,
@@ -50,6 +51,8 @@ pub enum RecoveryAction {
     Retry(Box<Command>),
     OpenSettings,
     Manual(String),
+    /// Install a missing `az` CLI extension by name (e.g. "resource-graph").
+    InstallExtension(String),
 }
 
 /* ============================================================================================== */
@@ -142,6 +145,7 @@ impl AppError {
             ErrorKind::CliExecutionFailed => "CLI error",
             ErrorKind::CliTimeout => "CLI Timeout",
             ErrorKind::CliParseError => "Parse error",
+            ErrorKind::CliExtensionMissing => "Extension missing",
             ErrorKind::NetworkError => "Network error",
             ErrorKind::MasterPasswordWrong => "Wrong password",
             ErrorKind::CacheDecryptionFailed => "Cache decrypt failed",
@@ -160,3 +164,26 @@ impl fmt::Display for AppError {
 }
 
 impl std::error::Error for AppError {}
+
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extension_missing_has_label() {
+        let err = AppError::new(ErrorKind::CliExtensionMissing, "x");
+        assert_eq!(err.kind_label(), "Extension missing");
+    }
+
+    #[test]
+    fn install_extension_recovery_constructs() {
+        let err = AppError::new(ErrorKind::CliExtensionMissing, "x")
+            .with_recovery(RecoveryAction::InstallExtension("resource-graph".into()));
+        assert!(matches!(err.recovery, Some(RecoveryAction::InstallExtension(_))));
+    }
+}
