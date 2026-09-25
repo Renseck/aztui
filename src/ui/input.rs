@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::actions;
 use crate::app::{AppState, CostGrouping, CostView, Modal, PasswordMode, Pane, RunPane, View};
 use crate::command::Command;
+use crate::palette::{PaletteMode, PaletteState};
 use crate::ui::widgets::{activity_log, cost_explorer, quick_switch, resource_browser};
 
 /* ============================================================================================== */
@@ -269,7 +270,8 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
     match modal {
         Modal::QuickSwitch { query, filtered, cursor } => {
             handle_quick_switch_input(key, query, filtered, *cursor, state)
-        }
+        },
+        Modal::Palette(p) => handle_palette_input(key, p),
         Modal::Confirm { on_confirm, .. } => match key.code {
             KeyCode::Enter => Some(*on_confirm.clone()),
             KeyCode::Esc => Some(Command::CloseModal),
@@ -284,6 +286,34 @@ fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<
             _ => None,
         },
         Modal::PasswordPrompt { .. } => handle_password_input(key, state),
+    }
+}
+
+/* ============================================================================================== */
+fn handle_palette_input(key: KeyEvent, p: &PaletteState) -> Option<Command> {
+    let in_target = matches!(p.mode, PaletteMode::TargetActions(_));
+    match key.code {
+        KeyCode::Esc => Some(if in_target { Command::PaletteBack } else { Command::CloseModal }),
+        KeyCode::Enter => Some(Command::PaletteActivate),
+        KeyCode::Tab | KeyCode::Right => Some(Command::PaletteDrill),
+        KeyCode::Up => Some(Command::NavUp),
+        KeyCode::Down => Some(Command::NavDown),
+        KeyCode::Backspace => {
+            if p.query.is_empty() {
+                in_target.then_some(Command::PaletteBack)
+            } else {
+                let mut q = p.query.clone();
+                q.pop();
+                Some(Command::PaletteQuery(q))
+            }
+        }
+        // j/k are printable here: the palette is a text box first.
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut q = p.query.clone();
+            q.push(c);
+            Some(Command::PaletteQuery(q))
+        }
+        _ => None,
     }
 }
 
@@ -499,4 +529,25 @@ mod tests {
         s.active_view = View::CostExplorer;
         assert!(matches!(handle_input(key(KeyCode::Backspace), &s), Some(Command::CostScopeUp)));
     }
+
+    #[test]
+    fn palette_keys_map_to_palette_commands() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.modal = Some(Modal::Palette(crate::palette::PaletteState::new(&s, crate::palette::PaletteMode::All)));
+        assert!(matches!(handle_input(key(KeyCode::Char('j')), &s), Some(Command::PaletteQuery(q)) if q == "j"));
+        assert!(matches!(handle_input(key(KeyCode::Tab), &s), Some(Command::PaletteDrill)));
+        assert!(matches!(handle_input(key(KeyCode::Enter), &s), Some(Command::PaletteActivate)));
+        assert!(matches!(handle_input(key(KeyCode::Esc), &s), Some(Command::CloseModal)));
+        // Backspace on an empty query in All mode does nothing.
+        assert!(handle_input(key(KeyCode::Backspace), &s).is_none());
+
+        let vm = crate::actions::Target::from_global(&global("web-01", VM_TYPE, "sub-a"));
+        s.modal = Some(Modal::Palette(crate::palette::PaletteState::new(
+            &s,
+            crate::palette::PaletteMode::TargetActions(vm),
+        )));
+        assert!(matches!(handle_input(key(KeyCode::Backspace), &s), Some(Command::PaletteBack)));
+        assert!(matches!(handle_input(key(KeyCode::Esc), &s), Some(Command::PaletteBack)));
+    }
+
 }

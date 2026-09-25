@@ -2,7 +2,7 @@
 //! renderer lives in `ui::widgets::palette`.
 
 use crate::actions::{self, ActionId, Scope, Target};
-use crate::app::{AppState, SLOT_GRAPH};
+use crate::app::{AppState, Modal, SLOT_GRAPH};
 use crate::domain::models::AzureContext;
 use crate::ui::fuzzy::fuzzy_score;
 use crate::ui::widgets::resource_browser::abbreviate_resource_type;
@@ -180,6 +180,20 @@ pub fn subscription_name(state: &AppState, subscription_id: &str) -> String {
         .find(|s| s.id == subscription_id)
         .map(|s| s.name.clone())
         .unwrap_or_else(|| subscription_id.to_string())
+}
+
+/* ============================================================================================== */
+/// Rebuilds the open palette's rows from current state and clamps its cursor.
+/// No-op when the palette is not open.
+pub fn refresh(state: &mut AppState) {
+    let rows = match &state.modal {
+        Some(Modal::Palette(p)) => build_palette_rows(state, &p.mode, &p.query, &p.opened_target),
+        _ => return,
+    };
+    if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+        p.rows = rows;
+        p.cursor = p.cursor.min(p.selectable_count().saturating_sub(1));
+    }
 }
 
 /* ============================================================================================== */

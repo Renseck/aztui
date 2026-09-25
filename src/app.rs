@@ -8,6 +8,7 @@ use tokio::sync::{mpsc};
 use ratatui::widgets::ListState;
 use tui_textarea::{Input, Key, TextArea};
 
+use crate::actions::{self, Target};
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::activity::{ActivityLogProvider, ActivityScope, ActivityWindow};
@@ -19,6 +20,7 @@ use crate::domain::resources::ResourceProvider;
 use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
+use crate::palette::{PaletteMode, PaletteRow, PaletteState};
 use crate::security::{SecurityManager};
 
 
@@ -72,6 +74,7 @@ pub enum Modal {
         filtered: Vec<AzureContext>,
         cursor: usize,
     },
+    Palette(crate::palette::PaletteState),
     Confirm {
         message: String,
         on_confirm: Box<Command>,
@@ -534,6 +537,7 @@ pub async fn dispatch_command(
             };
             events.push(Event::OperationStarted(op.clone()));
             state.pending_operations.insert(op_id, op);
+            crate::palette::refresh(state);
         }
 
         Command::GlobalInventoryResult(result) => {
@@ -550,6 +554,7 @@ pub async fn dispatch_command(
                     events.push(Event::ErrorOccurred(e));
                 }
             }
+            crate::palette::refresh(state);
         }
 
         Command::InstallExtension(name) => {
@@ -787,9 +792,84 @@ pub async fn dispatch_command(
             events.push(Event::ModalClosed);
         }
 
+        
+        /* ====================================== Palette ======================================= */
+
+        Command::OpenPalette(mode) => {
+            let wants_inventory = mode == PaletteMode::All
+                && state.global_resources.is_empty()
+                && state.active_context.is_some()
+                && !state.pending_operations.contains_key(&SLOT_GRAPH);
+            let palette = PaletteState::new(state, mode);
+            events.push(Event::ModalOpened(Modal::Palette(palette.clone())));
+            state.modal = Some(Modal::Palette(palette));
+            if wants_inventory {
+                let _ = cmd_tx.try_send(Command::FetchGlobalInventory);
+            }
+        }
+
+        Command::PaletteQuery(q) => {
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                p.query = q;
+                p.cursor = 0;
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteDrill => {
+            let target = match &state.modal {
+                Some(Modal::Palette(p)) => match p.selected() {
+                    Some(PaletteRow::Resource(idx)) => state.global_resources.get(*idx).map(Target::from_global),
+                    Some(PaletteRow::Context(ctx)) => Some(Target::Context(ctx.clone())),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let (Some(target), Some(Modal::Palette(p))) = (target, state.modal.as_mut()) {
+                p.return_query = std::mem::take(&mut p.query);
+                p.mode = PaletteMode::TargetActions(target);
+                p.cursor = 0;
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteBack => {
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                if matches!(p.mode, PaletteMode::TargetActions(_)) {
+                    p.mode = PaletteMode::All;
+                    p.query = std::mem::take(&mut p.return_query);
+                    p.cursor = 0;
+                }
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteActivate => {
+            let cmd = match &state.modal {
+                Some(Modal::Palette(p)) => match p.selected() {
+                    Some(PaletteRow::Action(id, target)) => id.build(state, target),
+                    Some(PaletteRow::Context(ctx)) => Some(Command::SwitchContext(ctx.clone())),
+                    Some(PaletteRow::Resource(idx)) => state
+                        .global_resources
+                        .get(*idx)
+                        .map(Target::from_global)
+                        .and_then(|t| actions::default_action(&t).and_then(|id| id.build(state, &t))),
+                    _ => None,
+                },
+                _ => None,
+            };
+            state.modal = None;
+            events.push(Event::ModalClosed);
+            if let Some(cmd) = cmd {
+                let _ = cmd_tx.try_send(cmd);
+            }
+        }
+
         Command::NavUp => {
             state.last_interaction = Instant::now();
-            if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
+                        if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                p.cursor = p.cursor.saturating_sub(1);
+            } else if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
                 state.modal.as_mut()
             {
                 if *cursor > 0 {
@@ -834,7 +914,10 @@ pub async fn dispatch_command(
 
         Command::NavDown => {
             state.last_interaction = Instant::now();
-            if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                let len = p.selectable_count();
+                p.cursor = clamp_increment(p.cursor, len);
+            } else if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
                 state.modal.as_mut()
             {
                 let max = filtered.len().saturating_sub(1);
@@ -1610,7 +1693,8 @@ mod nav_tests {
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
-    use crate::test_support::{self, dispatch, drain, state_with_contexts};
+    use crate::palette::{build_palette_rows, resource_haystacks, PaletteMode, PaletteRow};
+    use crate::test_support::{self, VM_TYPE, dispatch, drain, global, state_with_contexts,};
 
     fn in_context(sub: &str) -> Command {
         Command::InContext {
@@ -1677,5 +1761,84 @@ mod dispatch_tests {
         let (_, mut rx) = dispatch(&mut s, Command::OpenResourceGroup("rg-2".into())).await;
         assert_eq!(s.pending_rg_focus.as_deref(), Some("rg-2"));
         assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+    }
+
+    fn palette(s: &AppState) -> &crate::palette::PaletteState {
+        match &s.modal {
+            Some(Modal::Palette(p)) => p,
+            other => panic!("expected palette, got {:?}", other),
+        }
+    }
+
+    fn with_vm_inventory() -> AppState {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.global_resources = vec![global("web-01", VM_TYPE, "sub-a")];
+        s.resource_haystacks = resource_haystacks(&s);
+        s
+    }
+
+    #[tokio::test]
+    async fn open_palette_requests_inventory_when_missing() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::FetchGlobalInventory]));
+        assert_eq!(palette(&s).mode, PaletteMode::All);
+    }
+
+    #[tokio::test]
+    async fn palette_query_filters_on_the_full_query() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("w".into())).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        let p = palette(&s).clone();
+        assert_eq!(p.query, "web-01");
+        assert_eq!(p.rows, build_palette_rows(&s, &p.mode, "web-01", &p.opened_target));
+    }
+
+    #[tokio::test]
+    async fn palette_drill_then_back_restores_query() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        dispatch(&mut s, Command::PaletteDrill).await;
+        assert!(matches!(palette(&s).mode, PaletteMode::TargetActions(_)));
+        assert_eq!(palette(&s).query, "");
+        dispatch(&mut s, Command::PaletteBack).await;
+        assert_eq!(palette(&s).mode, PaletteMode::All);
+        assert_eq!(palette(&s).query, "web-01");
+    }
+
+    #[tokio::test]
+    async fn palette_activate_on_vm_runs_default_action_and_closes() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        assert!(matches!(palette(&s).selected(), Some(PaletteRow::Resource(0))));
+        let (_, mut rx) = dispatch(&mut s, Command::PaletteActivate).await;
+        assert!(s.modal.is_none());
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::OpenRunCommand { .. }]));
+    }
+
+    #[tokio::test]
+    async fn nav_keys_move_the_palette_cursor_within_bounds() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::ContextsOnly)).await;
+        dispatch(&mut s, Command::NavDown).await;
+        dispatch(&mut s, Command::NavDown).await;
+        assert_eq!(palette(&s).cursor, 1);
+        dispatch(&mut s, Command::NavUp).await;
+        assert_eq!(palette(&s).cursor, 0);
+    }
+
+    #[tokio::test]
+    async fn inventory_result_refreshes_an_open_palette() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        assert!(!palette(&s).rows.contains(&PaletteRow::Resource(0)));
+        let rows = vec![global("web-01", VM_TYPE, "sub-a")];
+        dispatch(&mut s, Command::GlobalInventoryResult(Ok(rows))).await;
+        assert!(palette(&s).rows.contains(&PaletteRow::Resource(0)));
     }
 }

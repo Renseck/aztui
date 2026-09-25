@@ -49,6 +49,23 @@ pub enum Command {
     /// Close the current modal.
     CloseModal,
 
+    /* ======================================== Palette ========================================= */
+
+    /// Open the command palette in the given mode.
+    OpenPalette(crate::palette::PaletteMode),
+
+    /// Replace the palette query and rebuild its rows.
+    PaletteQuery(String),
+
+    /// Drill into the selected resource/context row's actions.
+    PaletteDrill,
+
+    /// Leave target actions and restore the previous query.
+    PaletteBack,
+
+    /// Run the selected palette row.
+    PaletteActivate,
+
     /* ===================================== List navigation ==================================== */
 
     /// Move the list cursor up by one row.

@@ -40,6 +40,7 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
     if let Some(m) = &state.modal {
         match m {
             Modal::QuickSwitch { .. } => quick_switch::render(frame, state, theme),
+            Modal::Palette(p) => crate::ui::widgets::palette::render(frame, state, p, theme),
             Modal::ErrorDetail(_) => modal::render_error_detail(frame, state, theme),
             Modal::Confirm { .. } => modal::render_confirm(frame, state, theme),
             Modal::PasswordPrompt { .. } => modal::render_password_prompt(frame, state, theme),
