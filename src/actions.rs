@@ -546,6 +546,57 @@ pub fn default_command(s: &AppState) -> Option<Command> {
 }
 
 /* ============================================================================================== */
+/*                                              Hints                                             */
+/* ============================================================================================== */
+
+/// Hint-bar entries `(key, label)` for the active view. The order is: the
+/// default Enter action, then the applicable registry actions that have a hint,
+/// then the view's mechanic hints.
+pub fn hints_for(s: &AppState) -> Vec<(String, String)> {
+    let t = current_target(s);
+    let mut out: Vec<(String, String)> = Vec::new();
+
+    if uses_default_enter(s) {
+        if let Some(id) = default_action(&t) {
+            if let (true, Some(hint)) = (id.applies(s, &t), id.spec().hint) {
+                out.push(("↵".to_string(), hint.to_string()));
+            }
+        }
+    }
+
+    for id in ordered_visible(s, &t) {
+        let spec = id.spec();
+        let (Some(hint), Some(key)) = (spec.hint, spec.key) else {
+            continue;
+        };
+        if id.applies(s, &t) {
+            out.push((spec.hint_key.unwrap_or(key.display).to_string(), hint.to_string()));
+        }
+    }
+
+    out.extend(mechanic_hints(s).iter().map(|(k, l)| (k.to_string(), l.to_string())));
+    out
+}
+
+/* ============================================================================================== */
+/// Hints for hand-coded view mechanics (Enter/Tab/Esc/Backspace behaviour that
+/// is not a registry action).
+pub fn mechanic_hints(s: &AppState) -> &'static [(&'static str, &'static str)] {
+    match s.active_view {
+        View::ContextSwitcher => &[],
+        View::ResourceBrowser => &[("Tab", "panes"), ("Esc", "back")],
+        View::CostExplorer => match s.cost_view {
+            CostView::Subscription(CostGrouping::ByService) => &[("Esc", "back")],
+            CostView::Subscription(CostGrouping::ByResourceGroup) => &[("↵", "drill"), ("Esc", "back")],
+            CostView::ResourceGroup(_) => &[("Bksp", "up"), ("Esc", "up")],
+        },
+        View::ActivityLog => &[("↵", "detail"), ("Esc", "back")],
+        View::RunCommand => &[("Tab", "switch pane"), ("Esc", "back")],
+        View::GlobalSearch | View::Help => &[("Esc", "back")],
+    }
+}
+
+/* ============================================================================================== */
 /*                                         Private helpers                                        */
 /* ============================================================================================== */
 
@@ -915,6 +966,41 @@ mod tests {
         s.global_resources = vec![global("web-01", VM_TYPE, "sub-a")];
         assert!(uses_default_enter(&s));
         assert!(matches!(default_command(&s), Some(Command::OpenRunCommand { .. })));
+    }
+
+        fn has_hint(hints: &[(String, String)], key: &str, label: &str) -> bool {
+        hints.iter().any(|(k, l)| k == key && l == label)
+    }
+
+    #[test]
+    fn hints_are_selection_aware_in_resource_browser() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::ResourceBrowser;
+        s.resource_groups = vec![resource_group("rg-app")];
+        s.resource_browser_focus = Pane::Right;
+
+        s.resources = vec![resource("vm-1", "rg-app", VM_TYPE)];
+        let vm_hints = hints_for(&s);
+        assert!(has_hint(&vm_hints, "↵", "run command"), "{:?}", vm_hints);
+        assert!(has_hint(&vm_hints, "a", "activity"));
+        assert!(has_hint(&vm_hints, "Tab", "panes"));
+
+        s.resources = vec![resource("st01", "rg-app", STORAGE_TYPE)];
+        let st_hints = hints_for(&s);
+        assert!(!st_hints.iter().any(|(_, l)| l == "run command"));
+        assert!(!st_hints.iter().any(|(k, _)| k == "↵"), "go-to-RG is hidden in the browser");
+    }
+
+    #[test]
+    fn hints_drop_inapplicable_actions() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::CostExplorer;
+        assert!(has_hint(&hints_for(&s), "g", "grouping"));
+        assert!(has_hint(&hints_for(&s), "[/]", "period"));
+        s.cost_view = CostView::ResourceGroup("rg".into());
+        let hints = hints_for(&s);
+        assert!(!hints.iter().any(|(_, l)| l == "grouping"));
+        assert!(has_hint(&hints, "Bksp", "up"));
     }
 
 }

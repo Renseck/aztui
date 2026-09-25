@@ -136,20 +136,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     render_left_pane(frame, panes[0], state, theme);
     render_right_pane(frame, panes[1], state, theme);
 
-    crate::ui::widgets::hint_bar::render(
-        frame,
-        outer[2],
-        &[
-            ("Tab", "panes"),
-            ("/", "search"),
-            ("↵", "run (VM)"),
-            ("a", "activity"),
-            ("c", "costs"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        theme,
-    );
+    crate::ui::widgets::hint_bar::render(frame, outer[2], &crate::actions::hints_for(state), theme);
 }
 
 /* ============================================================================================== */
@@ -277,8 +264,6 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
     let rg_name = selected_resource_group_name(state).unwrap_or_default();
     let resources = filtered_resources(state);
     let count = resources.len();
-    let sel_cursor = state.resource_cursor.min(count.saturating_sub(1));
-    let selected_is_vm = resources.get(sel_cursor).map_or(false, |r| is_vm(&r.resource_type));
 
     let base_title = if rg_name.is_empty() {
         " Resources ".to_string()
@@ -286,14 +271,7 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
         format!(" {} ({}) ", rg_name, count)
     };
 
-    let title = if is_focused && selected_is_vm {
-        Line::from(vec![
-            Span::styled(base_title, theme.surface_style().fg(theme.text)),
-            Span::styled("↵ run-command (enter) ", theme.hint_style()),
-        ])
-    } else {
-        Line::from(Span::styled(base_title, theme.surface_style().fg(theme.text)))
-    };
+    let title = Line::from(Span::styled(base_title, theme.surface_style().fg(theme.text)));
 
     let block = Block::default()
         .title(title)
