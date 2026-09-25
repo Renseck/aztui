@@ -3,8 +3,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::View;
+use crate::app::{AppState, CostGrouping, CostView, Modal, Pane, View};
+use crate::command::Command;
+use crate::domain::activity::ActivityScope;
 use crate::domain::models::{AzureContext, GlobalResource};
+use crate::ui::widgets::{context_switcher, cost_explorer, global_search, quick_switch, resource_browser};
 
 /* ============================================================================================== */
 /*                                             Targets                                            */
@@ -155,13 +158,358 @@ pub struct ActionSpec {
 }
 
 /* ============================================================================================== */
+/*                                             Actions                                            */
+/* ============================================================================================== */
+
+const COST_AND_ACTIVITY: &[View] = &[View::CostExplorer, View::ActivityLog];
+const COST_ONLY: &[View] = &[View::CostExplorer];
+const ACTIVITY_ONLY: &[View] = &[View::ActivityLog];
+const RUN_COMMAND_ONLY: &[View] = &[View::RunCommand];
+const RG_OR_RESOURCE: &[TargetKind] = &[TargetKind::ResourceGroup, TargetKind::Resource];
+const RESOURCE_ONLY: &[TargetKind] = &[TargetKind::Resource];
+const CONTEXT_ONLY: &[TargetKind] = &[TargetKind::Context];
+const F5: KeyBinding = KeyBinding { code: KeyCode::F(5), mods: KeyModifiers::NONE, display: "F5" };
+// Const items so the slices are `'static`; an inline `&[KeyBinding::plain(..)]`
+// is a temporary because const-fn calls are not promoted.
+const PREV_ALT_KEYS: &[KeyBinding] = &[KeyBinding::plain('h', "h")];
+const NEXT_ALT_KEYS: &[KeyBinding] = &[KeyBinding::plain('l', "l")];
+
+/// Every named action in aztui. Navigation mechanics (j/k, Tab, Enter, Esc,
+/// text entry) are deliberately not actions; they stay in `ui::input`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActionId {
+    GoContexts,
+    GoResources,
+    GoCost,
+    GoActivity,
+    GoGlobalSearch,
+    QuickSwitch,
+    Help,
+    Quit,
+    Refresh,
+    FocusSearch,
+    PrevPeriod,
+    NextPeriod,
+    ToggleCostGrouping,
+    BroadenActivityScope,
+    ToggleFailedOnly,
+    RunScript,
+    ActivityForTarget,
+    CostForResourceGroup,
+    RunCommand,
+    GoToResourceGroup,
+    SwitchToContext,
+}
+
+/* ============================================================================================== */
+
+/// Builds an [`ActionSpec`] with no alternate keys and no hint-key override.
+const fn action(
+    label: &'static str,
+    key: Option<KeyBinding>,
+    scope: Scope,
+    hint: Option<&'static str>,
+) -> ActionSpec {
+    ActionSpec { label, key, alt_keys: &[], scope, hint, hint_key: None }
+}
+
+/* ============================================================================================== */
+
+impl ActionId {
+    /// Every action, in display order (within each scope class).
+    pub const ALL: &'static [ActionId] = &[
+        ActionId::GoContexts,
+        ActionId::GoResources,
+        ActionId::GoCost,
+        ActionId::GoActivity,
+        ActionId::GoGlobalSearch,
+        ActionId::QuickSwitch,
+        ActionId::Help,
+        ActionId::Quit,
+        ActionId::Refresh,
+        ActionId::FocusSearch,
+        ActionId::PrevPeriod,
+        ActionId::NextPeriod,
+        ActionId::ToggleCostGrouping,
+        ActionId::BroadenActivityScope,
+        ActionId::ToggleFailedOnly,
+        ActionId::RunScript,
+        ActionId::ActivityForTarget,
+        ActionId::CostForResourceGroup,
+        ActionId::RunCommand,
+        ActionId::GoToResourceGroup,
+        ActionId::SwitchToContext,
+    ];
+
+    /* ========================================================================================== */
+    /// Static description: label, key, scope, and hint.
+    pub fn spec(self) -> ActionSpec {
+        use ActionId::*;
+        match self {
+            GoContexts => action("Go to context switcher", Some(KeyBinding::plain('1', "1")), Scope::Global, None),
+            GoResources => action("Go to resource browser", Some(KeyBinding::plain('2', "2")), Scope::Global, None),
+            GoCost => action("Go to cost explorer", Some(KeyBinding::plain('3', "3")), Scope::Global, None),
+            GoActivity => action("Go to activity log", Some(KeyBinding::plain('4', "4")), Scope::Global, None),
+            GoGlobalSearch => action("Go to global search", Some(KeyBinding::plain('5', "5")), Scope::Global, None),
+            QuickSwitch => action("Switch context", Some(KeyBinding::ctrl('g', "Ctrl+G")), Scope::Global, None),
+            Help => action("Help", Some(KeyBinding::plain('?', "?")), Scope::Global, None),
+            Quit => action("Quit", Some(KeyBinding::plain('q', "q")), Scope::Global, None),
+            Refresh => action("Refresh view", Some(KeyBinding::plain('r', "r")), Scope::Global, Some("refresh")),
+            FocusSearch => action("Search", Some(KeyBinding::plain('/', "/")), Scope::Global, Some("search")),
+            PrevPeriod => ActionSpec {
+                alt_keys: PREV_ALT_KEYS,
+                hint_key: Some("[/]"),
+                ..action("Previous period", Some(KeyBinding::plain('[', "[")), Scope::View(COST_AND_ACTIVITY), Some("period"))
+            },
+            NextPeriod => ActionSpec {
+                alt_keys: NEXT_ALT_KEYS,
+                ..action("Next period", Some(KeyBinding::plain(']', "]")), Scope::View(COST_AND_ACTIVITY), None)
+            },
+            ToggleCostGrouping => action("Toggle cost grouping", Some(KeyBinding::plain('g', "g")), Scope::View(COST_ONLY), Some("grouping")),
+            BroadenActivityScope => action("Broaden activity scope", Some(KeyBinding::plain('s', "s")), Scope::View(ACTIVITY_ONLY), Some("scope")),
+            ToggleFailedOnly => action("Toggle failed-only", Some(KeyBinding::plain('f', "f")), Scope::View(ACTIVITY_ONLY), Some("failed-only")),
+            RunScript => action("Run script", Some(F5), Scope::View(RUN_COMMAND_ONLY), Some("run")),
+            ActivityForTarget => action("Activity log", Some(KeyBinding::plain('a', "a")), Scope::Target(RG_OR_RESOURCE), Some("activity")),
+            CostForResourceGroup => action("Cost for resource group", Some(KeyBinding::plain('c', "c")), Scope::Target(RG_OR_RESOURCE), Some("costs")),
+            RunCommand => action("Run command", None, Scope::Target(RESOURCE_ONLY), Some("run command")),
+            GoToResourceGroup => action("Go to resource group", None, Scope::Target(RESOURCE_ONLY), Some("go to RG")),
+            SwitchToContext => action("Switch to context", None, Scope::Target(CONTEXT_ONLY), Some("switch")),
+        }
+    }
+
+    /* ========================================================================================== */
+    /// The command this action produces for target `t` in state `s`, or `None`
+    /// when it does not apply (the action is then hidden and its key is a no-op).
+    pub fn build(self, s: &AppState, t: &Target) -> Option<Command> {
+        use ActionId::*;
+        match self {
+            GoContexts => go(s, View::ContextSwitcher),
+            GoResources => go(s, View::ResourceBrowser),
+            GoCost => go(s, View::CostExplorer),
+            GoActivity => go(s, View::ActivityLog),
+            GoGlobalSearch => go(s, View::GlobalSearch),
+            QuickSwitch => Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
+                query: String::new(),
+                filtered: quick_switch::build_filtered(s, ""),
+                cursor: 0,
+            }))),
+            Help => Some(if s.active_view == View::Help {
+                Command::NavigateTo(s.previous_view.clone())
+            } else {
+                Command::NavigateTo(View::Help)
+            }),
+            Quit => Some(Command::Quit),
+            Refresh => match s.active_view {
+                View::ContextSwitcher => Some(Command::RefreshContextList),
+                View::ResourceBrowser => Some(Command::ListResourceGroups),
+                View::CostExplorer => Some(Command::FetchCostSummary {
+                    period: s.cost_period.clone(),
+                    view: s.cost_view.clone(),
+                }),
+                View::ActivityLog => s.activity.as_ref().map(|_| Command::FetchActivityLog),
+                View::GlobalSearch => Some(Command::FetchGlobalInventory),
+                View::RunCommand | View::Help => None,
+            },
+            FocusSearch => match s.active_view {
+                View::ContextSwitcher | View::ResourceBrowser => Some(Command::UpdateSearch(String::new())),
+                View::ActivityLog => s.activity.as_ref().map(|_| Command::SetActivitySearchFocus(true)),
+                View::GlobalSearch => Some(Command::SetGlobalSearchFocus(true)),
+                View::CostExplorer | View::RunCommand | View::Help => None,
+            },
+            PrevPeriod => match s.active_view {
+                View::CostExplorer => Some(Command::FetchCostSummary {
+                    period: s.cost_period.previous_month(),
+                    view: s.cost_view.clone(),
+                }),
+                View::ActivityLog => s.activity.as_ref().map(|_| Command::CycleActivityWindow(-1)),
+                _ => None,
+            },
+            NextPeriod => match s.active_view {
+                View::CostExplorer => s.cost_period.next_month().map(|period| Command::FetchCostSummary {
+                    period,
+                    view: s.cost_view.clone(),
+                }),
+                View::ActivityLog => s.activity.as_ref().map(|_| Command::CycleActivityWindow(1)),
+                _ => None,
+            },
+            ToggleCostGrouping => match s.cost_view {
+                CostView::Subscription(_) => Some(Command::ToggleCostGrouping),
+                CostView::ResourceGroup(_) => None,
+            },
+            BroadenActivityScope => s
+                .activity
+                .as_ref()
+                .and_then(|a| a.scope.widened())
+                .map(|_| Command::CycleActivityScope),
+            ToggleFailedOnly => s.activity.as_ref().map(|_| Command::ToggleActivityFailedOnly),
+            RunScript => {
+                let session = s.run_command.as_ref()?;
+                if session.script().trim().is_empty() {
+                    return None;
+                }
+                Some(Command::OpenModal(Box::new(Modal::Confirm {
+                    message: format!(
+                        "Run this PowerShell script on {} (rg: {})?",
+                        session.vm_name, session.resource_group
+                    ),
+                    on_confirm: Box::new(Command::RunVmCommand),
+                })))
+            }
+            ActivityForTarget => match t {
+                Target::ResourceGroup { subscription_id, name } => Some(Command::OpenResourceActivity {
+                    scope: ActivityScope::ResourceGroup {
+                        subscription_id: subscription_id.clone(),
+                        resource_group: name.clone(),
+                    },
+                }),
+                Target::Resource { subscription_id, resource_group, id, name, .. } => {
+                    Some(Command::OpenResourceActivity {
+                        scope: ActivityScope::Resource {
+                            subscription_id: subscription_id.clone(),
+                            resource_group: resource_group.clone(),
+                            resource_id: id.clone(),
+                            resource_name: name.clone(),
+                        },
+                    })
+                }
+                _ => None,
+            },
+            CostForResourceGroup => {
+                let (sub, rg) = match t {
+                    Target::ResourceGroup { subscription_id, name } => (subscription_id, name),
+                    Target::Resource { subscription_id, resource_group, .. } => (subscription_id, resource_group),
+                    _ => return None,
+                };
+                Some(Command::InContext {
+                    subscription_id: sub.clone(),
+                    then: Box::new(Command::OpenResourceGroupCost { resource_group: rg.clone() }),
+                })
+            }
+            RunCommand => match t {
+                Target::Resource { subscription_id, resource_group, name, resource_type, .. }
+                    if resource_browser::is_vm(resource_type) && s.active_view != View::RunCommand =>
+                {
+                    Some(Command::OpenRunCommand {
+                        subscription_id: subscription_id.clone(),
+                        resource_group: resource_group.clone(),
+                        vm_name: name.clone(),
+                    })
+                }
+                _ => None,
+            },
+            GoToResourceGroup => match t {
+                // Already in the browser: the RG is on screen, so Enter stays a no-op.
+                Target::Resource { subscription_id, resource_group, .. }
+                    if s.active_view != View::ResourceBrowser =>
+                {
+                    Some(Command::InContext {
+                        subscription_id: subscription_id.clone(),
+                        then: Box::new(Command::OpenResourceGroup(resource_group.clone())),
+                    })
+                }
+                _ => None,
+            },
+            SwitchToContext => match t {
+                Target::Context(ctx) => Some(Command::SwitchContext(ctx.clone())),
+                _ => None,
+            },
+        }
+    }
+
+    /* ========================================================================================== */
+    /// True if [`ActionId::build`] yields a command for `t`.
+    pub fn applies(self, s: &AppState, t: &Target) -> bool {
+        self.build(s, t).is_some()
+    }
+}
+
+/* ============================================================================================== */
+/*                                      Targets and defaults                                      */
+/* ============================================================================================== */
+
+/// The target under the cursor in the active view.
+pub fn current_target(s: &AppState) -> Target {
+    let active_sub = s.active_context.as_ref().map(|c| c.subscription.id.clone());
+    let target = match s.active_view {
+        View::ContextSwitcher => context_switcher::selected_context(s).map(Target::Context),
+        View::ResourceBrowser => active_sub.and_then(|sub| match s.resource_browser_focus {
+            Pane::Left => resource_browser::selected_resource_group_name(s)
+                .map(|name| Target::ResourceGroup { subscription_id: sub, name }),
+            Pane::Right => {
+                let filtered = resource_browser::filtered_resources(s);
+                let cursor = s.resource_cursor.min(filtered.len().saturating_sub(1));
+                filtered.get(cursor).map(|r| Target::Resource {
+                    subscription_id: sub,
+                    resource_group: r.resource_group.clone(),
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    resource_type: r.resource_type.clone(),
+                })
+            }
+        }),
+        View::CostExplorer => match s.cost_view {
+            CostView::Subscription(CostGrouping::ByResourceGroup) => active_sub.and_then(|sub| {
+                cost_explorer::selected_row_label(s)
+                    .map(|name| Target::ResourceGroup { subscription_id: sub, name })
+            }),
+            _ => None,
+        },
+        View::GlobalSearch => global_search::selected_global_resource(s).map(Target::from_global),
+        View::RunCommand => s.run_command.as_ref().map(|r| Target::Resource {
+            subscription_id: r.subscription_id.clone(),
+            resource_group: r.resource_group.clone(),
+            id: format!(
+                "/subscriptions/{}/resourceGroups/{}/providers/{}/{}",
+                r.subscription_id,
+                r.resource_group,
+                resource_browser::VM_RESOURCE_TYPE,
+                r.vm_name
+            ),
+            name: r.vm_name.clone(),
+            resource_type: resource_browser::VM_RESOURCE_TYPE.to_string(),
+        }),
+        View::ActivityLog | View::Help => None,
+    };
+    target.unwrap_or(Target::None)
+}
+
+/* ============================================================================================== */
+/// The action Enter runs on `t`: VMs open run-command, other resources go to
+/// their resource group, contexts switch.
+pub fn default_action(t: &Target) -> Option<ActionId> {
+    match t {
+        Target::Resource { resource_type, .. } if resource_browser::is_vm(resource_type) => {
+            Some(ActionId::RunCommand)
+        }
+        Target::Resource { .. } => Some(ActionId::GoToResourceGroup),
+        Target::Context(_) => Some(ActionId::SwitchToContext),
+        Target::ResourceGroup { .. } | Target::None => None,
+    }
+}
+
+/* ============================================================================================== */
+/*                                         Private helpers                                        */
+/* ============================================================================================== */
+
+/// `NavigateTo(view)`, or `None` when already there.
+fn go(s: &AppState, view: View) -> Option<Command> {
+    (s.active_view != view).then(|| Command::NavigateTo(view))
+}
+
+
+/* ============================================================================================== */
 /*                                              Tests                                             */
 /* ============================================================================================== */
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{global, key, key_mod, VM_TYPE};
+    use crate::app::{CostGrouping, CostView, Pane, RunCommandSession};
+    use crate::command::Command;
+    use crate::test_support::{
+        ctx, global, key, key_mod, resource, resource_group, state_with_contexts, STORAGE_TYPE,
+        VM_TYPE,
+    };
 
     #[test]
     fn plain_letter_matches_exactly() {
@@ -200,5 +548,175 @@ mod tests {
         assert_eq!(t.name(), "web-01");
         assert!(matches!(t, Target::Resource { ref subscription_id, .. } if subscription_id == "sub-b"));
         assert_eq!(Target::None.kind(), None);
+    }
+
+    /// Exhaustive: adding an `ActionId` variant fails to compile until it is
+    /// listed here, then fails the test until it is added to `ALL`.
+    fn ordinal(id: ActionId) -> usize {
+        use ActionId::*;
+        match id {
+            GoContexts => 0,
+            GoResources => 1,
+            GoCost => 2,
+            GoActivity => 3,
+            GoGlobalSearch => 4,
+            QuickSwitch => 5,
+            Help => 6,
+            Quit => 7,
+            Refresh => 8,
+            FocusSearch => 9,
+            PrevPeriod => 10,
+            NextPeriod => 11,
+            ToggleCostGrouping => 12,
+            BroadenActivityScope => 13,
+            ToggleFailedOnly => 14,
+            RunScript => 15,
+            ActivityForTarget => 16,
+            CostForResourceGroup => 17,
+            RunCommand => 18,
+            GoToResourceGroup => 19,
+            SwitchToContext => 20,
+        }
+    }
+    const VARIANT_COUNT: usize = 21;
+
+    #[test]
+    fn all_lists_every_variant_exactly_once() {
+        assert_eq!(ActionId::ALL.len(), VARIANT_COUNT);
+        let mut seen = [false; VARIANT_COUNT];
+        for id in ActionId::ALL {
+            let i = ordinal(*id);
+            assert!(!seen[i], "{:?} listed twice", id);
+            seen[i] = true;
+        }
+    }
+
+    #[test]
+    fn go_actions_are_none_in_their_own_view() {
+        let pairs = [
+            (View::ContextSwitcher, ActionId::GoContexts),
+            (View::ResourceBrowser, ActionId::GoResources),
+            (View::CostExplorer, ActionId::GoCost),
+            (View::ActivityLog, ActionId::GoActivity),
+            (View::GlobalSearch, ActionId::GoGlobalSearch),
+        ];
+        for (view, id) in pairs {
+            let mut s = state_with_contexts(Some("sub-a"));
+            s.active_view = view.clone();
+            assert!(id.build(&s, &Target::None).is_none(), "{:?} in {:?}", id, view);
+        }
+        let s = state_with_contexts(Some("sub-a"));
+        assert!(matches!(
+            ActionId::GoCost.build(&s, &Target::None),
+            Some(Command::NavigateTo(View::CostExplorer))
+        ));
+    }
+
+    #[test]
+    fn refresh_is_view_aware() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        assert!(matches!(ActionId::Refresh.build(&s, &Target::None), Some(Command::RefreshContextList)));
+        s.active_view = View::CostExplorer;
+        assert!(matches!(ActionId::Refresh.build(&s, &Target::None), Some(Command::FetchCostSummary { .. })));
+        s.active_view = View::Help;
+        assert!(ActionId::Refresh.build(&s, &Target::None).is_none());
+    }
+
+    #[test]
+    fn focus_search_is_view_aware() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::GlobalSearch;
+        assert!(matches!(
+            ActionId::FocusSearch.build(&s, &Target::None),
+            Some(Command::SetGlobalSearchFocus(true))
+        ));
+        s.active_view = View::CostExplorer;
+        assert!(ActionId::FocusSearch.build(&s, &Target::None).is_none());
+    }
+
+    #[test]
+    fn cost_grouping_hidden_when_drilled_into_rg() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::CostExplorer;
+        assert!(ActionId::ToggleCostGrouping.build(&s, &Target::None).is_some());
+        s.cost_view = CostView::ResourceGroup("rg".into());
+        assert!(ActionId::ToggleCostGrouping.build(&s, &Target::None).is_none());
+    }
+
+    #[test]
+    fn default_action_by_target() {
+        let vm = Target::from_global(&global("web-01", VM_TYPE, "sub-a"));
+        let st = Target::from_global(&global("st01", STORAGE_TYPE, "sub-a"));
+        assert_eq!(default_action(&vm), Some(ActionId::RunCommand));
+        assert_eq!(default_action(&st), Some(ActionId::GoToResourceGroup));
+        assert_eq!(default_action(&Target::Context(ctx("sub-a", "t1"))), Some(ActionId::SwitchToContext));
+        assert_eq!(default_action(&Target::None), None);
+    }
+
+    #[test]
+    fn run_command_only_for_vms_and_not_inside_run_command_view() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let vm = Target::from_global(&global("web-01", VM_TYPE, "sub-b"));
+        let st = Target::from_global(&global("st01", STORAGE_TYPE, "sub-a"));
+        assert!(matches!(
+            ActionId::RunCommand.build(&s, &vm),
+            Some(Command::OpenRunCommand { ref subscription_id, ref vm_name, .. })
+                if subscription_id == "sub-b" && vm_name == "web-01"
+        ));
+        assert!(ActionId::RunCommand.build(&s, &st).is_none());
+        s.active_view = View::RunCommand;
+        assert!(ActionId::RunCommand.build(&s, &vm).is_none());
+    }
+
+    #[test]
+    fn cost_and_go_to_rg_wrap_in_context() {
+        let s = state_with_contexts(Some("sub-a"));
+        let st = Target::from_global(&global("st01", STORAGE_TYPE, "sub-b"));
+        match ActionId::CostForResourceGroup.build(&s, &st) {
+            Some(Command::InContext { subscription_id, then }) => {
+                assert_eq!(subscription_id, "sub-b");
+                assert!(matches!(*then, Command::OpenResourceGroupCost { ref resource_group } if resource_group == "rg-app"));
+            }
+            other => panic!("expected InContext, got {:?}", other),
+        }
+        assert!(matches!(
+            ActionId::GoToResourceGroup.build(&s, &st),
+            Some(Command::InContext { then, .. }) if matches!(*then, Command::OpenResourceGroup(ref rg) if rg == "rg-app")
+        ));
+    }
+
+    #[test]
+    fn go_to_rg_hidden_in_resource_browser() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::ResourceBrowser;
+        let st = Target::from_global(&global("st01", STORAGE_TYPE, "sub-a"));
+        assert!(ActionId::GoToResourceGroup.build(&s, &st).is_none());
+    }
+
+    #[test]
+    fn current_target_follows_view_and_pane() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        assert!(matches!(current_target(&s), Target::Context(ref c) if c.subscription.id == "sub-a"));
+
+        s.active_view = View::ResourceBrowser;
+        s.resource_groups = vec![resource_group("rg-app")];
+        s.resources = vec![resource("web-01", "rg-app", VM_TYPE)];
+        s.resource_browser_focus = Pane::Left;
+        assert!(matches!(current_target(&s), Target::ResourceGroup { ref name, .. } if name == "rg-app"));
+        s.resource_browser_focus = Pane::Right;
+        assert!(matches!(current_target(&s), Target::Resource { ref name, .. } if name == "web-01"));
+
+        s.active_view = View::CostExplorer;
+        assert_eq!(current_target(&s), Target::None);
+        s.cost_view = CostView::Subscription(CostGrouping::ByResourceGroup);
+        assert_eq!(current_target(&s), Target::None); // no summary loaded
+
+        s.active_view = View::GlobalSearch;
+        s.global_resources = vec![global("st01", STORAGE_TYPE, "sub-b")];
+        assert!(matches!(current_target(&s), Target::Resource { ref subscription_id, .. } if subscription_id == "sub-b"));
+
+        s.active_view = View::RunCommand;
+        s.run_command = Some(RunCommandSession::new("sub-a".into(), "rg-app".into(), "vm-1".into()));
+        assert!(matches!(current_target(&s), Target::Resource { ref resource_type, .. } if resource_type == VM_TYPE));
     }
 }
