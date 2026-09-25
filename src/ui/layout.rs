@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
+use crate::actions::HelpSection;
 use crate::app::{AppState, Modal, View};
 use crate::ui::theme::{Theme};
 use crate::ui::widgets::{context_switcher, modal, quick_switch, status_bar};
@@ -144,91 +145,38 @@ fn _render_phase_stub(
 
 /* ============================================================================================== */
 fn render_help(frame: &mut Frame, area: ratatui::layout::Rect, theme: &Theme) {
-    let lines = vec![
-        Line::from(""),
-        Line::from(vec![Span::styled("  Navigation", theme.heading_style())]),
-        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
-        Line::from(vec![
-            Span::styled("  ↑/↓  or  j/k   ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Navigate list", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Tab / ← / →     ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Switch pane (resource browser)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Enter           ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Select / confirm / open detail", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Esc             ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Clear search / close modal / back", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  Actions", theme.heading_style())]),
-        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
-        Line::from(vec![
-            Span::styled("  1 / 2 / 3 / 4 / 5   ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Context / Resources / Cost / Activity log / Global search", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  /               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Focus search", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Ctrl+G          ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Quick switch context", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  r               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Refresh current view", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  [ / ]  or  h/l  ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Period / window navigation (cost & activity)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  a               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Activity log for selected resource/RG", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  g               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Toggle cost grouping: service / resource group", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  c               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Cost for selected resource group (resource browser)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  f / s           ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Failed-only / broaden scope (activity log)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  F5              ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Run script on VM (run-command view)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Tab             ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Switch editor/output (run-command view)", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  System", theme.heading_style())]),
-        Line::from(vec![Span::styled("  ─────────────────────────────────────────", theme.hint_style())]),
-        Line::from(vec![
-            Span::styled("  ?               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Toggle this help screen", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("  q               ", theme.surface_style().fg(theme.azure_light)),
-            Span::styled("Quit", theme.surface_style().fg(theme.text)),
-        ]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            format!("  aztui v{}", env!("CARGO_PKG_VERSION")),
-            theme.hint_style(),
-        )]),
-    ];
+    // Two columns so the generated help fits an 80x24 terminal.
+    let (left, right): (Vec<HelpSection>, Vec<HelpSection>) = crate::actions::help_sections()
+        .into_iter()
+        .partition(|s| s.title == "Global" || s.title == "Navigation");
 
-    let para = Paragraph::new(lines).style(theme.base_style());
-    frame.render_widget(para, area);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let mut left_lines = help_lines(&left, theme);
+    left_lines.push(Line::from(Span::styled(
+        format!("  aztui v{}", env!("CARGO_PKG_VERSION")),
+        theme.hint_style(),
+    )));
+
+    frame.render_widget(Paragraph::new(left_lines).style(theme.base_style()), cols[0]);
+    frame.render_widget(Paragraph::new(help_lines(&right, theme)).style(theme.base_style()), cols[1]);
+}
+
+/* ============================================================================================== */
+fn help_lines(sections: &[HelpSection], theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from("")];
+    for section in sections {
+        lines.push(Line::from(Span::styled(format!("  {}", section.title), theme.heading_style())));
+        for (key, label) in &section.entries {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<14}", key), theme.surface_style().fg(theme.azure_light)),
+                Span::styled(label.to_string(), theme.surface_style().fg(theme.text)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+    lines
 }

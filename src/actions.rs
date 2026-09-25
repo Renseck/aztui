@@ -597,6 +597,64 @@ pub fn mechanic_hints(s: &AppState) -> &'static [(&'static str, &'static str)] {
 }
 
 /* ============================================================================================== */
+/*                                              Help                                              */
+/* ============================================================================================== */
+
+/// One titled block of the help screen.
+#[derive(Debug, Clone)]
+pub struct HelpSection {
+    pub title: &'static str,
+    pub entries: Vec<(String, &'static str)>,
+}
+
+/// Mechanics documented in the help screen's Navigation section.
+const NAVIGATION_HELP: &[(&str, &str)] = &[
+    ("↑/↓  j/k", "Navigate list"),
+    ("Tab  ← →", "Switch pane"),
+    ("Enter", "Select / open / default action"),
+    ("Esc", "Clear search / close / back"),
+    ("Backspace", "Up one level (cost explorer)"),
+];
+
+/* ============================================================================================== */
+/// The help screen, generated from the registry: Global, one section per view
+/// with view-scoped actions, target actions, then navigation mechanics.
+pub fn help_sections() -> Vec<HelpSection> {
+    let entry = |id: &ActionId| {
+        let spec = id.spec();
+        (key_label(&spec), spec.label)
+    };
+    let by_scope = |pred: &dyn Fn(Scope) -> bool| -> Vec<(String, &'static str)> {
+        ActionId::ALL.iter().filter(|id| pred(id.spec().scope)).map(|id| entry(id)).collect()
+    };
+
+    let mut sections = vec![HelpSection {
+        title: "Global",
+        entries: by_scope(&|s| s == Scope::Global),
+    }];
+    for (view, title) in [
+        (View::CostExplorer, "Cost explorer"),
+        (View::ActivityLog, "Activity log"),
+        (View::RunCommand, "Run command"),
+    ] {
+        sections.push(HelpSection {
+            title,
+            entries: by_scope(&|s| matches!(s, Scope::View(views) if views.contains(&view))),
+        });
+    }
+    sections.push(HelpSection {
+        title: "On selected item",
+        entries: by_scope(&|s| matches!(s, Scope::Target(_))),
+    });
+    sections.push(HelpSection {
+        title: "Navigation",
+        entries: NAVIGATION_HELP.iter().map(|(k, l)| (k.to_string(), *l)).collect(),
+    });
+    sections
+}
+
+
+/* ============================================================================================== */
 /*                                         Private helpers                                        */
 /* ============================================================================================== */
 
@@ -604,7 +662,6 @@ pub fn mechanic_hints(s: &AppState) -> &'static [(&'static str, &'static str)] {
 fn go(s: &AppState, view: View) -> Option<Command> {
     (s.active_view != view).then(|| Command::NavigateTo(view))
 }
-
 
 /* ============================================================================================== */
 fn scope_rank(scope: Scope) -> u8 {
@@ -614,6 +671,19 @@ fn scope_rank(scope: Scope) -> u8 {
         Scope::Global => 2,
     }
 }
+
+/* ============================================================================================== */
+/// "[ / h" for keyed actions (primary plus alternates); "↵" for keyless default actions.
+fn key_label(spec: &ActionSpec) -> String {
+    match spec.key {
+        Some(k) => std::iter::once(k.display)
+            .chain(spec.alt_keys.iter().map(|a| a.display))
+            .collect::<Vec<_>>()
+            .join(" / "),
+        None => "↵".to_string(),
+    }
+}
+
 
 
 /* ============================================================================================== */
@@ -1001,6 +1071,30 @@ mod tests {
         let hints = hints_for(&s);
         assert!(!hints.iter().any(|(_, l)| l == "grouping"));
         assert!(has_hint(&hints, "Bksp", "up"));
+    }
+
+        #[test]
+    fn help_lists_every_action_once() {
+        let sections = help_sections();
+        for id in ActionId::ALL {
+            let label = id.spec().label;
+            let hits = sections
+                .iter()
+                .flat_map(|s| s.entries.iter())
+                .filter(|(_, l)| *l == label)
+                .count();
+            assert!(hits >= 1, "{:?} missing from help", id);
+        }
+    }
+
+    #[test]
+    fn help_shows_alternate_keys_and_default_enter() {
+        let sections = help_sections();
+        let entries: Vec<&(String, &str)> = sections.iter().flat_map(|s| s.entries.iter()).collect();
+        assert!(entries.iter().any(|(k, l)| k == "[ / h" && *l == "Previous period"));
+        assert!(entries.iter().any(|(k, l)| k == "↵" && *l == "Run command"));
+        assert_eq!(sections.first().map(|s| s.title), Some("Global"));
+        assert_eq!(sections.last().map(|s| s.title), Some("Navigation"));
     }
 
 }
