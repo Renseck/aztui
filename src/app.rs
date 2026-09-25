@@ -205,6 +205,7 @@ pub struct ScrollStates {
     pub resource_groups: RefCell<ListState>,
     pub resources: RefCell<ListState>,
     pub global_search: RefCell<ListState>,
+    pub palette: RefCell<ListState>,
 }
 
 /* ============================================================================================== */

@@ -121,7 +121,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
 
 /* ============================================================================================== */
 /// Pads (or truncates) `s` to exactly `width` characters so list columns align.
-fn pad(s: &str, width: usize) -> String {
+pub(crate) fn pad(s: &str, width: usize) -> String {
     let len = s.chars().count();
     if len >= width {
         s.chars().take(width.saturating_sub(1)).chain(std::iter::once(' ')).collect()
