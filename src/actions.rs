@@ -488,12 +488,80 @@ pub fn default_action(t: &Target) -> Option<ActionId> {
 }
 
 /* ============================================================================================== */
+/*                                     Visibility and resolution                                  */
+/* ============================================================================================== */
+
+/// True if `id`'s scope makes it visible in the active view for target `t`.
+/// Scope only: says nothing about whether `build` succeeds.
+pub fn is_visible(id: ActionId, s: &AppState, t: &Target) -> bool {
+    match id.spec().scope {
+        Scope::Global => true,
+        Scope::View(views) => views.contains(&s.active_view),
+        Scope::Target(kinds) => t.kind().map_or(false, |k| kinds.contains(&k)),
+    }
+}
+
+/* ============================================================================================== */
+/// Scope-visible actions for `t` in precedence order: View-scoped, then
+/// Target-scoped, then Global, each in [`ActionId::ALL`] order.
+pub fn ordered_visible(s: &AppState, t: &Target) -> Vec<ActionId> {
+    let mut ids: Vec<ActionId> = ActionId::ALL
+        .iter()
+        .copied()
+        .filter(|id| is_visible(*id, s, t))
+        .collect();
+    // Stable sort: keeps ALL order within each scope class.
+    ids.sort_by_key(|id| scope_rank(id.spec().scope));
+    ids
+}
+
+/* ============================================================================================== */
+/// Maps a key to the first visible, applicable action bound to it.
+pub fn resolve_key(key: KeyEvent, s: &AppState) -> Option<Command> {
+    let t = current_target(s);
+    ordered_visible(s, &t)
+        .into_iter()
+        .filter(|id| {
+            let spec = id.spec();
+            spec.key.iter().chain(spec.alt_keys.iter()).any(|kb| kb.matches(&key))
+        })
+        .find_map(|id| id.build(s, &t))
+}
+
+/* ============================================================================================== */
+/// True if Enter in the active view runs the current target's default action.
+pub fn uses_default_enter(s: &AppState) -> bool {
+    match s.active_view {
+        View::ContextSwitcher | View::GlobalSearch => true,
+        View::ResourceBrowser => s.resource_browser_focus == Pane::Right,
+        _ => false,
+    }
+}
+
+/* ============================================================================================== */
+/// The command for the current target's default action, if any.
+pub fn default_command(s: &AppState) -> Option<Command> {
+    let t = current_target(s);
+    default_action(&t)?.build(s, &t)
+}
+
+/* ============================================================================================== */
 /*                                         Private helpers                                        */
 /* ============================================================================================== */
 
 /// `NavigateTo(view)`, or `None` when already there.
 fn go(s: &AppState, view: View) -> Option<Command> {
     (s.active_view != view).then(|| Command::NavigateTo(view))
+}
+
+
+/* ============================================================================================== */
+fn scope_rank(scope: Scope) -> u8 {
+    match scope {
+        Scope::View(_) => 0,
+        Scope::Target(_) => 1,
+        Scope::Global => 2,
+    }
 }
 
 
@@ -719,4 +787,134 @@ mod tests {
         s.run_command = Some(RunCommandSession::new("sub-a".into(), "rg-app".into(), "vm-1".into()));
         assert!(matches!(current_target(&s), Target::Resource { ref resource_type, .. } if resource_type == VM_TYPE));
     }
+
+        fn sample_target(kind: Option<TargetKind>) -> Target {
+        match kind {
+            None => Target::None,
+            Some(TargetKind::Context) => Target::Context(ctx("sub-a", "t1")),
+            Some(TargetKind::ResourceGroup) => Target::ResourceGroup {
+                subscription_id: "sub-a".into(),
+                name: "rg-app".into(),
+            },
+            Some(TargetKind::Resource) => Target::from_global(&global("web-01", VM_TYPE, "sub-a")),
+        }
+    }
+
+    #[test]
+    fn no_key_conflicts_within_any_view() {
+        let reachable: &[(View, &[Option<TargetKind>])] = &[
+            (View::ContextSwitcher, &[None, Some(TargetKind::Context)]),
+            (View::ResourceBrowser, &[None, Some(TargetKind::ResourceGroup), Some(TargetKind::Resource)]),
+            (View::CostExplorer, &[None, Some(TargetKind::ResourceGroup)]),
+            (View::ActivityLog, &[None]),
+            (View::GlobalSearch, &[None, Some(TargetKind::Resource)]),
+            (View::RunCommand, &[Some(TargetKind::Resource)]),
+            (View::Help, &[None]),
+        ];
+        for (view, kinds) in reachable {
+            for kind in kinds.iter() {
+                let mut s = state_with_contexts(Some("sub-a"));
+                s.active_view = view.clone();
+                let t = sample_target(*kind);
+                let mut seen: Vec<(String, ActionId)> = Vec::new();
+                for id in ordered_visible(&s, &t) {
+                    let spec = id.spec();
+                    for kb in spec.key.iter().chain(spec.alt_keys.iter()) {
+                        let sig = format!("{:?}{:?}", kb.code, kb.mods);
+                        if let Some((_, other)) = seen.iter().find(|(k, _)| *k == sig) {
+                            panic!("{:?}: {:?} and {:?} both bind {}", view, other, id, kb.display);
+                        }
+                        seen.push((sig, id));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_action_binds_a_mechanic_key() {
+        let mechanic = [
+            KeyCode::Char('j'), KeyCode::Char('k'), KeyCode::Tab, KeyCode::Enter, KeyCode::Esc,
+            KeyCode::Backspace, KeyCode::Up, KeyCode::Down, KeyCode::Left, KeyCode::Right,
+        ];
+        for id in ActionId::ALL {
+            let spec = id.spec();
+            for kb in spec.key.iter().chain(spec.alt_keys.iter()) {
+                assert!(!mechanic.contains(&kb.code), "{:?} binds mechanic key {}", id, kb.display);
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_visible_puts_view_then_target_then_global() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::CostExplorer;
+        let t = sample_target(Some(TargetKind::ResourceGroup));
+        let rank = |id: &ActionId| match id.spec().scope {
+            Scope::View(_) => 0,
+            Scope::Target(_) => 1,
+            Scope::Global => 2,
+        };
+        let ranks: Vec<u8> = ordered_visible(&s, &t).iter().map(rank).collect();
+        assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "{:?}", ranks);
+        assert!(ranks.contains(&0) && ranks.contains(&1) && ranks.contains(&2));
+    }
+
+    #[test]
+    fn resolve_key_global_digit_from_any_view() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::ActivityLog;
+        assert!(matches!(
+            resolve_key(key(KeyCode::Char('1')), &s),
+            Some(Command::NavigateTo(View::ContextSwitcher))
+        ));
+    }
+
+    #[test]
+    fn resolve_key_ctrl_g_upper_and_lower() {
+        let s = state_with_contexts(Some("sub-a"));
+        for c in ['g', 'G'] {
+            let cmd = resolve_key(key_mod(KeyCode::Char(c), KeyModifiers::CONTROL), &s);
+            assert!(matches!(cmd, Some(Command::OpenModal(_))), "Ctrl+{c}");
+        }
+    }
+
+    #[test]
+    fn resolve_key_help_with_shift() {
+        let s = state_with_contexts(Some("sub-a"));
+        assert!(matches!(
+            resolve_key(key_mod(KeyCode::Char('?'), KeyModifiers::SHIFT), &s),
+            Some(Command::NavigateTo(View::Help))
+        ));
+    }
+
+    #[test]
+    fn resolve_key_target_action_uses_selection() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::ResourceBrowser;
+        s.resource_groups = vec![resource_group("rg-app")];
+        assert!(matches!(
+            resolve_key(key(KeyCode::Char('a')), &s),
+            Some(Command::OpenResourceActivity { scope: ActivityScope::ResourceGroup { .. } })
+        ));
+    }
+
+    #[test]
+    fn resolve_key_view_action_only_in_its_view() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        assert!(resolve_key(key(KeyCode::Char('g')), &s).is_none());
+        s.active_view = View::CostExplorer;
+        assert!(matches!(resolve_key(key(KeyCode::Char('g')), &s), Some(Command::ToggleCostGrouping)));
+        assert!(matches!(resolve_key(key(KeyCode::Char('h')), &s), Some(Command::FetchCostSummary { .. })));
+    }
+
+    #[test]
+    fn default_command_in_global_search_vm_opens_run_command() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::GlobalSearch;
+        s.global_resources = vec![global("web-01", VM_TYPE, "sub-a")];
+        assert!(uses_default_enter(&s));
+        assert!(matches!(default_command(&s), Some(Command::OpenRunCommand { .. })));
+    }
+
 }
