@@ -28,6 +28,13 @@ pub enum Command {
     /// Fetch the currently active context from `az account show --output json`.
     FetchActiveContext,
 
+    /// Run `then` in the context of `subscription_id`: immediately when it is
+    /// the active subscription, otherwise after switching to it.
+    InContext {
+        subscription_id: String,
+        then: Box<Command>,
+    },
+
     /* ======================================= Navigation ======================================= */
 
     /// Change the active top-level view.
@@ -63,6 +70,9 @@ pub enum Command {
 
     /// Update the resource browser search query.
     UpdateResourceSearch(String),
+
+    /// Open the resource browser with the named resource group selected.
+    OpenResourceGroup(String),
 
     /* ===================================== Cost (Phase 4) ===================================== */
 

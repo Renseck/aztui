@@ -231,6 +231,8 @@ pub struct AppState {
     pub subscriptions_by_tenant: HashMap<String, Vec<Subscription>>,
     pub active_context: Option<AzureContext>,
     pub recent_contexts: Vec<AzureContext>,
+    /// Command to run once an in-flight context switch succeeds (see `InContext`).
+    pub pending_after_switch: Option<Command>,
 
     // Navigation & UI
     pub active_view: View,
@@ -302,6 +304,7 @@ impl AppState {
             subscriptions_by_tenant: HashMap::new(),
             active_context: None,
             recent_contexts: Vec::new(),
+            pending_after_switch: None,
             active_view: View::ContextSwitcher,
             previous_view: View::ContextSwitcher,
             search_query: String::new(),
@@ -477,6 +480,25 @@ pub async fn dispatch_command(
 
         Command::UpdateResourceSearch(q) => {
             state.resource_search_query = q;
+        }
+
+        Command::OpenResourceGroup(rg_name) => {
+            state.active_view = View::ResourceBrowser;
+            state.resource_browser_focus = Pane::Left;
+            state.search_query.clear();
+            state.search_focused = false;
+            state.resource_search_query.clear();
+            events.push(Event::ViewChanged(View::ResourceBrowser));
+
+            if state.resource_groups.is_empty() {
+                state.pending_rg_focus = Some(rg_name);
+                let _ = cmd_tx.try_send(Command::ListResourceGroups);
+            } else {
+                if let Some(idx) = state.resource_groups.iter().position(|g| g.name == rg_name) {
+                    state.resource_group_cursor = idx;
+                }
+                let _ = cmd_tx.try_send(Command::ListResources(rg_name));
+            }
         }
 
         Command::UpdateGlobalSearch(q) => {
@@ -1132,21 +1154,7 @@ pub async fn dispatch_command(
             let tx = cmd_tx.clone();
             let auth = Arc::clone(&auth);
 
-            let ctx = state
-                .subscriptions_by_tenant
-                .values()
-                .flatten()
-                .find(|s| s.id == sub_id)
-                .and_then(|sub| {
-                    state
-                        .tenants
-                        .iter()
-                        .find(|t| t.id == sub.tenant_id)
-                        .map(|tenant| AzureContext {
-                            tenant: tenant.clone(),
-                            subscription: sub.clone(),
-                        })
-                });
+            let ctx = resolve_context(state, &sub_id);
             
             if let Some(ctx) = ctx {
                 let ctx_clone = ctx.clone();
@@ -1168,6 +1176,32 @@ pub async fn dispatch_command(
                 };
                 events.push(Event::OperationStarted(op.clone()));
                 state.pending_operations.insert(op_id, op);
+            }
+        }
+        
+        Command::InContext { subscription_id, then } => {
+            let is_active = state
+                .active_context
+                .as_ref()
+                .map_or(false, |c| c.subscription.id == subscription_id);
+            if is_active {
+                let _ = cmd_tx.try_send(*then);
+                return events;
+            }
+            match resolve_context(state, &subscription_id) {
+                Some(ctx) => {
+                    // Last switch wins: a newer InContext replaces the pending command.
+                    state.pending_after_switch = Some(*then);
+                    let _ = cmd_tx.try_send(Command::SwitchContext(ctx));
+                }
+                None => {
+                    let err = AppError::new(
+                        ErrorKind::SubscriptionNotFound,
+                        "That resource's subscription is not in your context list",
+                    );
+                    state.last_error = Some(err.clone());
+                    events.push(Event::ErrorOccurred(err));
+                }
             }
         }
 
@@ -1225,10 +1259,14 @@ pub async fn dispatch_command(
                         events.push(Event::ModalClosed);
                     }
                     events.push(Event::ContextChanged(ctx));
+                    if let Some(next) = state.pending_after_switch.take() {
+                        let _ = cmd_tx.try_send(next);
+                    }
                 }
                 Err(e) => {
                     state.last_error = Some(e.clone());
                     events.push(Event::ErrorOccurred(e));
+                    state.pending_after_switch = None;
                 }
             }
         }
@@ -1538,6 +1576,23 @@ pub(crate) fn global_resource_command(
     }
 }
 
+/* ============================================================================================== */
+/// Looks up the full [`AzureContext`] (tenant + subscription) for a
+/// subscription ID in the loaded context list.
+fn resolve_context(state: &AppState, subscription_id: &str) -> Option<AzureContext> {
+    state
+        .subscriptions_by_tenant
+        .values()
+        .flatten()
+        .find(|s| s.id == subscription_id)
+        .and_then(|sub| {
+            state.tenants.iter().find(|t| t.id == sub.tenant_id).map(|tenant| AzureContext {
+                tenant: tenant.clone(),
+                subscription: sub.clone(),
+            })
+        })
+}
+
 fn abort_slot(state: &mut AppState, slot_id: OperationId) {
     if let Some(op) = state.pending_operations.remove(&slot_id) {
         if let Some(handle) = op.abort_handle {
@@ -1647,5 +1702,80 @@ mod nav_tests {
         assert_eq!(state.global_search_query, "");
         assert_eq!(state.global_search_cursor, 0);
         assert!(state.pending_rg_focus.is_none());
+    }
+}
+
+
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::test_support::{self, dispatch, drain, state_with_contexts};
+
+    fn in_context(sub: &str) -> Command {
+        Command::InContext {
+            subscription_id: sub.to_string(),
+            then: Box::new(Command::ListResourceGroups),
+        }
+    }
+
+    #[tokio::test]
+    async fn in_context_same_subscription_queues_then_immediately() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-a")).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+        assert!(s.pending_after_switch.is_none());
+    }
+
+    #[tokio::test]
+    async fn in_context_other_subscription_switches_then_runs_after_success() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-b")).await;
+        let queued = drain(&mut rx);
+        assert!(matches!(queued.as_slice(), [Command::SwitchContext(c)] if c.subscription.id == "sub-b"));
+        assert!(matches!(s.pending_after_switch, Some(Command::ListResourceGroups)));
+
+        let ok = Command::ContextSwitchResult(Ok(test_support::ctx("sub-b", "t1")));
+        let (_, mut rx) = dispatch(&mut s, ok).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+        assert!(s.pending_after_switch.is_none());
+    }
+
+    #[tokio::test]
+    async fn switch_failure_drops_pending_command() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.pending_after_switch = Some(Command::ListResourceGroups);
+        let err = AppError::new(ErrorKind::CliExecutionFailed, "boom");
+        let (_, mut rx) = dispatch(&mut s, Command::ContextSwitchResult(Err(err))).await;
+        assert!(s.pending_after_switch.is_none());
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn in_context_unknown_subscription_reports_error() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-zzz")).await;
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(s.last_error.map(|e| e.kind), Some(ErrorKind::SubscriptionNotFound));
+    }
+
+    #[tokio::test]
+    async fn open_resource_group_focuses_loaded_group() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.resource_groups = vec![test_support::resource_group("rg-1"), test_support::resource_group("rg-2")];
+        s.resource_browser_focus = Pane::Right;
+        let (_, mut rx) = dispatch(&mut s, Command::OpenResourceGroup("rg-2".into())).await;
+        assert_eq!(s.active_view, View::ResourceBrowser);
+        assert_eq!(s.resource_browser_focus, Pane::Left);
+        assert_eq!(s.resource_group_cursor, 1);
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResources(rg)] if rg == "rg-2"));
+    }
+
+    #[tokio::test]
+    async fn open_resource_group_defers_until_groups_load() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, Command::OpenResourceGroup("rg-2".into())).await;
+        assert_eq!(s.pending_rg_focus.as_deref(), Some("rg-2"));
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
     }
 }
