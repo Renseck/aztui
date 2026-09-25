@@ -1,14 +1,24 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::actions;
 use crate::app::{AppState, CostGrouping, CostView, Modal, PasswordMode, Pane, RunPane, View};
 use crate::command::Command;
-use crate::ui::widgets::{context_switcher, quick_switch, resource_browser};
+use crate::ui::widgets::{activity_log, cost_explorer, quick_switch, resource_browser};
+
+/* ============================================================================================== */
+
+/// Result of a view's mechanics handler: the key was consumed (possibly
+/// producing a command), or it passes through to the action registry.
+enum Flow {
+    Done(Option<Command>),
+    Pass,
+}
 
 /* ============================================================================================== */
 /// Maps a key event to a [`Command`], taking application state into account.
-/// Returns `None` for unhandled keys.
+/// Order: lock → modal → text entry → view mechanics → action registry.
 pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    // Locked: only allow password input (Phase 2) or quit.
+    // Locked: only allow password input or quit.
     if state.locked {
         if let Some(Modal::PasswordPrompt { .. }) = &state.modal {
             return handle_password_input(key, state);
@@ -19,238 +29,172 @@ pub fn handle_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         };
     }
 
-    // Modal-specific input.
     if let Some(modal) = &state.modal {
         return handle_modal_input(key, modal, state);
     }
 
-    // Search mode: route to the active view's search handler.
+    // Text entry.
     if state.search_focused {
         return match state.active_view {
             View::ResourceBrowser => handle_resource_search_input(key, state),
-            View::GlobalSearch => handle_global_search_input(key, state),
+            View::GlobalSearch => handle_global_search_text_input(key, state),
             _ => handle_search_input(key, state),
         };
     }
+    if state.active_view == View::ActivityLog
+        && state.activity.as_ref().map_or(false, |a| a.search_focused)
+    {
+        return handle_activity_search_input(key, state);
+    }
 
-    // Normal navigation.
-    handle_normal_input(key, state)
+    let flow = match state.active_view {
+        View::ContextSwitcher => context_switcher_mechanics(key, state),
+        View::ResourceBrowser => resource_browser_mechanics(key, state),
+        View::CostExplorer => cost_explorer_mechanics(key, state),
+        View::RunCommand => run_command_mechanics(key, state),
+        View::ActivityLog => activity_log_mechanics(key, state),
+        View::GlobalSearch => global_search_mechanics(key, state),
+        View::Help => help_mechanics(key, state),
+    };
+
+    match flow {
+        Flow::Done(cmd) => cmd,
+        Flow::Pass => actions::resolve_key(key, state),
+    }
 }
 
 /* ============================================================================================== */
-/*                                     Private input handlers                                     */
+/*                                         View mechanics                                         */
 /* ============================================================================================== */
 
-fn handle_normal_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    // Resource browser has its own keybindings.
-    if state.active_view == View::ResourceBrowser {
-        return handle_resource_browser_input(key, state);
+fn context_switcher_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Flow::Done(Some(Command::NavUp)),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Flow::Done(Some(Command::NavDown)),
+        (KeyModifiers::NONE, KeyCode::Enter) => Flow::Done(actions::default_command(state)),
+        _ => Flow::Pass,
     }
+}
 
-    // Cost explorer has its own keybindings.
-    if state.active_view == View::CostExplorer {
-        return handle_cost_explorer_input(key, state);
+/* ============================================================================================== */
+fn help_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            Flow::Done(Some(Command::NavigateTo(state.previous_view.clone())))
+        }
+        _ => Flow::Pass,
     }
+}
 
-    // Run-command view has its own keybindings.
-    if state.active_view == View::RunCommand {
-        return handle_run_command_input(key, state);
+/* ============================================================================================== */
+fn resource_browser_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Tab | KeyCode::Right | KeyCode::Left) => {
+            Flow::Done(Some(Command::ToggleResourcePane))
+        }
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Flow::Done(Some(Command::NavUp)),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Flow::Done(Some(Command::NavDown)),
+        (KeyModifiers::NONE, KeyCode::Enter) => Flow::Done(match state.resource_browser_focus {
+            Pane::Left => resource_browser::selected_resource_group_name(state).map(Command::ListResources),
+            Pane::Right => actions::default_command(state),
+        }),
+        (KeyModifiers::NONE, KeyCode::Esc) => Flow::Done(Some(Command::NavigateTo(View::ContextSwitcher))),
+        _ => Flow::Pass,
     }
+}
 
-    // Activity log view has its own keybindings.
-    if state.active_view == View::ActivityLog {
-        return handle_activity_log_input(key, state);
+/* ============================================================================================== */
+fn cost_explorer_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Flow::Done(Some(Command::NavUp)),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Flow::Done(Some(Command::NavDown)),
+        (KeyModifiers::NONE, KeyCode::Enter) => Flow::Done(match state.cost_view {
+            CostView::Subscription(CostGrouping::ByResourceGroup) => {
+                cost_explorer::selected_row_label(state).map(Command::DrillIntoResourceGroup)
+            }
+            _ => None,
+        }),
+        (KeyModifiers::NONE, KeyCode::Backspace) => Flow::Done(Some(Command::CostScopeUp)),
+        (KeyModifiers::NONE, KeyCode::Esc) => Flow::Done(Some(match state.cost_view {
+            CostView::ResourceGroup(_) => Command::CostScopeUp,
+            _ => Command::NavigateTo(View::ContextSwitcher),
+        })),
+        _ => Flow::Pass,
     }
+}
 
-    // Global search view has its own keybindings.
-    if state.active_view == View::GlobalSearch {
-        return handle_global_search_input(key, state);
-    }
+/* ============================================================================================== */
+fn run_command_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    let session = match state.run_command.as_ref() {
+        Some(s) => s,
+        None => return Flow::Pass,
+    };
 
     match (key.modifiers, key.code) {
-        // Quit
-        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
-
-        // Navigation
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
-
-        // Select / confirm
-        (KeyModifiers::NONE, KeyCode::Enter) => {
-            if let Some(ctx) = context_switcher::selected_context(state) {
-                Some(Command::SwitchContext(ctx))
-            } else {
-                None
-            }
+        // F5 is the registry's RunScript action, even while typing in the editor.
+        (_, KeyCode::F(5)) => Flow::Pass,
+        (KeyModifiers::NONE, KeyCode::Esc) => Flow::Done(Some(Command::NavigateTo(View::ResourceBrowser))),
+        (KeyModifiers::NONE, KeyCode::Tab) => Flow::Done(Some(Command::ToggleRunPane)),
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) if session.focus == RunPane::Output => {
+            Flow::Done(Some(Command::ScrollRunOutput(-1)))
         }
-
-        // Focus search
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
-
-        // Quick switch
-        (KeyModifiers::CONTROL, KeyCode::Char('G')) => {
-            let filtered = quick_switch::build_filtered(state, "");
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch { 
-                query: String::new(), 
-                filtered, 
-                cursor: 0 
-            })))
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) if session.focus == RunPane::Output => {
+            Flow::Done(Some(Command::ScrollRunOutput(1)))
         }
-
-        // Refresh
-        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::RefreshContextList),
-
-        // Help
-        (KeyModifiers::SHIFT, KeyCode::Char('?')) => {
-            if state.active_view == View::Help {
-                Some(Command::NavigateTo(state.previous_view.clone()))
-            } else {
-                Some(Command::NavigateTo(View::Help))
-            }
-        }
-
-        // Esc closes the help screen back to where you were.
-        (KeyModifiers::NONE, KeyCode::Esc) => {
-            if state.active_view == View::Help {
-                Some(Command::NavigateTo(state.previous_view.clone()))
-            } else {
-                None
-            }
-        }
-
-        // View shortcuts
-        (KeyModifiers::NONE, KeyCode::Char('1')) => {
-            Some(Command::NavigateTo(View::ContextSwitcher))
-        }
-        (KeyModifiers::NONE, KeyCode::Char('2')) => {
-            Some(Command::NavigateTo(View::ResourceBrowser))
-        }
-        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
-        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
-        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
-
-        _ => None
+        _ if session.focus == RunPane::Editor => Flow::Done(Some(Command::ScriptInput(key))),
+        _ => Flow::Pass,
     }
 }
 
 /* ============================================================================================== */
+fn activity_log_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Flow::Done(Some(Command::NavUp)),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Flow::Done(Some(Command::NavDown)),
+        (KeyModifiers::NONE, KeyCode::Enter) => Flow::Done(
+            activity_log::selected_entry(state)
+                .map(|e| Command::OpenModal(Box::new(Modal::ActivityDetail(Box::new(e))))),
+        ),
+        (KeyModifiers::NONE, KeyCode::Esc) => Flow::Done(Some(Command::NavigateTo(View::ContextSwitcher))),
+        _ => Flow::Pass,
+    }
+}
+
+/* ============================================================================================== */
+fn global_search_mechanics(key: KeyEvent, state: &AppState) -> Flow {
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Flow::Done(Some(Command::NavUp)),
+        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Flow::Done(Some(Command::NavDown)),
+        (KeyModifiers::NONE, KeyCode::Enter) => Flow::Done(actions::default_command(state)),
+        // Esc clears an active filter first; with no filter, it backs out to the context switcher.
+        (KeyModifiers::NONE, KeyCode::Esc) => Flow::Done(Some(if state.global_search_query.is_empty() {
+            Command::NavigateTo(View::ContextSwitcher)
+        } else {
+            Command::UpdateGlobalSearch(String::new())
+        })),
+        _ => Flow::Pass,
+    }
+}
+
+/* ============================================================================================== */
+/*                                           Text entry                                           */
+/* ============================================================================================== */
+
 fn handle_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     match key.code {
-        // Exit search mode
-        KeyCode::Esc => {
-            // Clear query and unfocus — handled in dispatch by UpdateSearch("") then we need
-            // to signal search unfocused. We use an empty UpdateSearch and rely on dispatch
-            // to clear search_focused when query is cleared via Esc.
-            Some(Command::UpdateSearch(String::from("\x1B"))) // sentinel for Esc in search
-        }
-
-        // Confirm selection from filtered results.s
-        KeyCode::Enter => {
-            if let Some(ctx) = context_switcher::selected_context(state) {
-                Some(Command::SwitchContext(ctx))
-            } else {
-                None
-            }
-        }
-
-        // Remove characters from search bar
+        // Sentinel: the main loop clears and unfocuses the search on this value.
+        KeyCode::Esc => Some(Command::UpdateSearch(String::from("\x1B"))),
+        KeyCode::Enter => actions::default_command(state),
         KeyCode::Backspace => {
             let mut q = state.search_query.clone();
             q.pop();
             Some(Command::UpdateSearch(q))
         }
-
-        // Add characters to search bar
         KeyCode::Char(c) => {
             let mut q = state.search_query.clone();
             q.push(c);
             Some(Command::UpdateSearch(q))
         }
-
-        _ => None,
-    }
-}
-
-/* ============================================================================================== */
-fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    // Search mode within resource browser.
-    if state.search_focused {
-        return handle_resource_search_input(key, state);
-    }
-
-    match (key.modifiers, key.code) {
-        // Quit
-        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
-
-        // Pane switching
-        (KeyModifiers::NONE, KeyCode::Tab)
-        | (KeyModifiers::NONE, KeyCode::Right)
-        | (KeyModifiers::NONE, KeyCode::Left) => Some(Command::ToggleResourcePane),
-
-        // Navigation within focused pane
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
-
-        // Enter: in left pane, load resources + focus right; in right pane, no-op for now
-        (KeyModifiers::NONE, KeyCode::Enter) => {
-            if state.resource_browser_focus == Pane::Left {
-                if let Some(rg_name) = resource_browser::selected_resource_group_name(state) {
-                    Some(Command::ListResources(rg_name))
-                } else {
-                    None
-                }
-            } else {
-                resource_browser::selected_vm_target(state).map(|t| Command::OpenRunCommand {
-                    subscription_id: t.subscription_id,
-                    resource_group: t.resource_group,
-                    vm_name: t.vm_name,
-                })
-            }
-        }
-
-        // Activity log for the selected resource / resource group
-        (KeyModifiers::NONE, KeyCode::Char('a')) => {
-            resource_browser::activity_scope_for_selection(state)
-                .map(|scope| Command::OpenResourceActivity { scope })
-        }
-
-        // Cost for the selected resource group
-        (KeyModifiers::NONE, KeyCode::Char('c')) => {
-            resource_browser::selected_resource_group_name(state)
-                .map(|rg| Command::OpenResourceGroupCost { resource_group: rg })
-        }
-
-        // Search
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::UpdateSearch(String::new())),
-
-        // Refresh
-        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::ListResourceGroups),
-
-        // Back to context switcher
-        (KeyModifiers::NONE, KeyCode::Esc) => {
-            Some(Command::NavigateTo(View::ContextSwitcher))
-        }
-
-        // Quick switch
-        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
-            let filtered = quick_switch::build_filtered(state, "");
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
-                query: String::new(),
-                filtered,
-                cursor: 0,
-            })))
-        }
-
-        // Help
-        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
-
-        // View shortcuts
-        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
-        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
-        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
-        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
-        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
-
         _ => None,
     }
 }
@@ -258,10 +202,7 @@ fn handle_resource_browser_input(key: KeyEvent, state: &AppState) -> Option<Comm
 /* ============================================================================================== */
 fn handle_resource_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     match key.code {
-        KeyCode::Esc => {
-            // Clear resource search and unfocus.
-            Some(Command::UpdateSearch(String::from("\x1B")))
-        }
+        KeyCode::Esc => Some(Command::UpdateSearch(String::from("\x1B"))),
         KeyCode::Backspace => {
             let mut q = state.resource_search_query.clone();
             q.pop();
@@ -277,250 +218,53 @@ fn handle_resource_search_input(key: KeyEvent, state: &AppState) -> Option<Comma
 }
 
 /* ============================================================================================== */
-fn handle_cost_explorer_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    match (key.modifiers, key.code) {
-        // Quit
-        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
-
-        // Navigate breakdown rows
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
-
-        // Period navigation (stays within the current view)
-        (KeyModifiers::NONE, KeyCode::Char('[') | KeyCode::Char('h')) => {
-            Some(Command::FetchCostSummary {
-                period: state.cost_period.previous_month(),
-                view: state.cost_view.clone(),
-            })
+/// Global-search text entry. Esc/Enter commit the filter and drop back to list
+/// navigation (the query stays applied); arrows move the selection while still
+/// in the search box; `/` is ignored so it never types a literal slash.
+fn handle_global_search_text_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => Some(Command::SetGlobalSearchFocus(false)),
+        KeyCode::Up => Some(Command::NavUp),
+        KeyCode::Down => Some(Command::NavDown),
+        KeyCode::Char('/') => None,
+        KeyCode::Backspace => {
+            let mut q = state.global_search_query.clone();
+            q.pop();
+            Some(Command::UpdateGlobalSearch(q))
         }
-        (KeyModifiers::NONE, KeyCode::Char(']') | KeyCode::Char('l')) => {
-            state.cost_period.next_month().map(|next| Command::FetchCostSummary {
-                period: next,
-                view: state.cost_view.clone(),
-            })
+        KeyCode::Char(c) => {
+            let mut q = state.global_search_query.clone();
+            q.push(c);
+            Some(Command::UpdateGlobalSearch(q))
         }
-
-        // Toggle subscription grouping (service <-> resource group)
-        (KeyModifiers::NONE, KeyCode::Char('g')) => Some(Command::ToggleCostGrouping),
-
-        // Drill into the selected resource group (only when grouped by RG)
-        (KeyModifiers::NONE, KeyCode::Enter) => {
-            if let CostView::Subscription(CostGrouping::ByResourceGroup) = state.cost_view {
-                crate::ui::widgets::cost_explorer::selected_row_label(state)
-                    .map(Command::DrillIntoResourceGroup)
-            } else {
-                None
-            }
-        }
-
-        // Pop back to the subscription level
-        (KeyModifiers::NONE, KeyCode::Backspace) => Some(Command::CostScopeUp),
-
-        // Refresh current view
-        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchCostSummary {
-            period: state.cost_period.clone(),
-            view: state.cost_view.clone(),
-        }),
-
-        // Esc: pop one level if drilled in; otherwise back to context switcher
-        (KeyModifiers::NONE, KeyCode::Esc) => {
-            if let CostView::ResourceGroup(_) = state.cost_view {
-                Some(Command::CostScopeUp)
-            } else {
-                Some(Command::NavigateTo(View::ContextSwitcher))
-            }
-        }
-
-        // Quick switch
-        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
-            let filtered = quick_switch::build_filtered(state, "");
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
-                query: String::new(),
-                filtered,
-                cursor: 0,
-            })))
-        }
-
-        // Help
-        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
-
-        // View shortcuts
-        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
-        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
-        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
-        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
-        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
-
         _ => None,
     }
 }
 
 /* ============================================================================================== */
-fn handle_run_command_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    let session = state.run_command.as_ref()?;
-
-    match (key.modifiers, key.code) {
-        // Run the script (F5): confirm first.
-        (_, KeyCode::F(5)) => {
-            if session.script().trim().is_empty() {
-                return None;
-            }
-            let message = format!(
-                "Run this PowerShell script on {} (rg: {})?",
-                session.vm_name, session.resource_group
-            );
-            Some(Command::OpenModal(Box::new(Modal::Confirm {
-                message,
-                on_confirm: Box::new(Command::RunVmCommand),
-            })))
-        }
-
-        // Back to the resource browser.
-        (KeyModifiers::NONE, KeyCode::Esc) => Some(Command::NavigateTo(View::ResourceBrowser)),
-
-        // Toggle editor/output focus.
-        (KeyModifiers::NONE, KeyCode::Tab) => Some(Command::ToggleRunPane),
-
-        // Scroll output when it is focused.
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) if session.focus == RunPane::Output => {
-            Some(Command::ScrollRunOutput(-1))
-        }
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) if session.focus == RunPane::Output => {
-            Some(Command::ScrollRunOutput(1))
-        }
-
-        // Otherwise, feed the key to the editor when it has focus.
-        _ if session.focus == RunPane::Editor => Some(Command::ScriptInput(key)),
-        _ => None,
-    }
-}
-
-/* ============================================================================================== */
-fn handle_activity_log_input(key: KeyEvent, state: &AppState) -> Option<Command> {
+fn handle_activity_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
     let activity = state.activity.as_ref()?;
-
-    // Search-entry mode (activity-local; does not use the global search flag).
-    if activity.search_focused {
-        return match key.code {
-            KeyCode::Esc | KeyCode::Enter => Some(Command::SetActivitySearchFocus(false)),
-            KeyCode::Backspace => {
-                let mut q = activity.search.clone();
-                q.pop();
-                Some(Command::UpdateActivitySearch(q))
-            }
-            KeyCode::Char(c) => {
-                let mut q = activity.search.clone();
-                q.push(c);
-                Some(Command::UpdateActivitySearch(q))
-            }
-            _ => None,
-        };
-    }
-
-    match (key.modifiers, key.code) {
-        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
-
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
-
-        // Detail modal for the selected entry.
-        (KeyModifiers::NONE, KeyCode::Enter) => {
-            crate::ui::widgets::activity_log::selected_entry(state)
-                .map(|e| Command::OpenModal(Box::new(Modal::ActivityDetail(Box::new(e)))))
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => Some(Command::SetActivitySearchFocus(false)),
+        KeyCode::Backspace => {
+            let mut q = activity.search.clone();
+            q.pop();
+            Some(Command::UpdateActivitySearch(q))
         }
-
-        // Window cycling.
-        (KeyModifiers::NONE, KeyCode::Char('[') | KeyCode::Char('h')) => Some(Command::CycleActivityWindow(-1)),
-        (KeyModifiers::NONE, KeyCode::Char(']') | KeyCode::Char('l')) => Some(Command::CycleActivityWindow(1)),
-
-        // Scope broaden, failed-only, search, refresh.
-        (KeyModifiers::NONE, KeyCode::Char('s')) => Some(Command::CycleActivityScope),
-        (KeyModifiers::NONE, KeyCode::Char('f')) => Some(Command::ToggleActivityFailedOnly),
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::SetActivitySearchFocus(true)),
-        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchActivityLog),
-
-        (KeyModifiers::NONE, KeyCode::Esc) => Some(Command::NavigateTo(View::ContextSwitcher)),
-
-        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
-            let filtered = quick_switch::build_filtered(state, "");
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
-                query: String::new(),
-                filtered,
-                cursor: 0,
-            })))
+        KeyCode::Char(c) => {
+            let mut q = activity.search.clone();
+            q.push(c);
+            Some(Command::UpdateActivitySearch(q))
         }
-
-        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
-        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
-        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
-        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
-        (KeyModifiers::NONE, KeyCode::Char('4')) => None, // already here
-        (KeyModifiers::NONE, KeyCode::Char('5')) => Some(Command::NavigateTo(View::GlobalSearch)),
-
         _ => None,
     }
 }
 
 /* ============================================================================================== */
-fn handle_global_search_input(key: KeyEvent, state: &AppState) -> Option<Command> {
-    // Search-entry mode. Esc/Enter commit the filter and drop back to list
-    // navigation (the query stays applied); arrows move the selection while
-    // still in the search box; `/` is ignored so it never types a literal slash.
-    if state.search_focused {
-        return match key.code {
-            KeyCode::Esc | KeyCode::Enter => Some(Command::SetGlobalSearchFocus(false)),
-            KeyCode::Up => Some(Command::NavUp),
-            KeyCode::Down => Some(Command::NavDown),
-            KeyCode::Char('/') => None,
-            KeyCode::Backspace => {
-                let mut q = state.global_search_query.clone();
-                q.pop();
-                Some(Command::UpdateGlobalSearch(q))
-            }
-            KeyCode::Char(c) => {
-                let mut q = state.global_search_query.clone();
-                q.push(c);
-                Some(Command::UpdateGlobalSearch(q))
-            }
-            _ => None,
-        };
-    }
-
-    match (key.modifiers, key.code) {
-        (KeyModifiers::NONE, KeyCode::Char('q')) => Some(Command::Quit),
-        (KeyModifiers::NONE, KeyCode::Up | KeyCode::Char('k')) => Some(Command::NavUp),
-        (KeyModifiers::NONE, KeyCode::Down | KeyCode::Char('j')) => Some(Command::NavDown),
-        (KeyModifiers::NONE, KeyCode::Enter) => Some(Command::OpenGlobalResource),
-        // `/` focuses the search input, keeping any existing query so it can be refined.
-        (KeyModifiers::NONE, KeyCode::Char('/')) => Some(Command::SetGlobalSearchFocus(true)),
-        (KeyModifiers::NONE, KeyCode::Char('r')) => Some(Command::FetchGlobalInventory),
-        // Esc clears an active filter first; with no filter, it backs out to the context switcher.
-        (KeyModifiers::NONE, KeyCode::Esc) => {
-            if state.global_search_query.is_empty() {
-                Some(Command::NavigateTo(View::ContextSwitcher))
-            } else {
-                Some(Command::UpdateGlobalSearch(String::new()))
-            }
-        }
-        (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
-            let filtered = quick_switch::build_filtered(state, "");
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
-                query: String::new(),
-                filtered,
-                cursor: 0,
-            })))
-        }
-        (_, KeyCode::Char('?')) => Some(Command::NavigateTo(View::Help)),
-        (KeyModifiers::NONE, KeyCode::Char('1')) => Some(Command::NavigateTo(View::ContextSwitcher)),
-        (KeyModifiers::NONE, KeyCode::Char('2')) => Some(Command::NavigateTo(View::ResourceBrowser)),
-        (KeyModifiers::NONE, KeyCode::Char('3')) => Some(Command::NavigateTo(View::CostExplorer)),
-        (KeyModifiers::NONE, KeyCode::Char('4')) => Some(Command::NavigateTo(View::ActivityLog)),
-        (KeyModifiers::NONE, KeyCode::Char('5')) => None, // already here
-        _ => None,
-    }
-}
-
+/*                                         Modal handlers                                         */
 /* ============================================================================================== */
+
+
 fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<Command> {
     match modal {
         Modal::QuickSwitch { query, filtered, cursor } => {
@@ -668,5 +412,91 @@ fn handle_password_input(key: KeyEvent, state: &AppState) -> Option<Command> {
         }
 
         _ => None,
+    }
+}
+
+
+/* ============================================================================================== */
+/*                                              Tests                                             */
+/* ============================================================================================== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::RunCommandSession;
+    use crate::test_support::{global, key, key_mod, state_with_contexts, STORAGE_TYPE, VM_TYPE};
+
+    #[test]
+    fn ctrl_g_works_in_context_switcher_both_cases() {
+        let s = state_with_contexts(Some("sub-a"));
+        for c in ['g', 'G'] {
+            let cmd = handle_input(key_mod(KeyCode::Char(c), KeyModifiers::CONTROL), &s);
+            assert!(matches!(cmd, Some(Command::OpenModal(_))), "Ctrl+{c}");
+        }
+    }
+
+    #[test]
+    fn digit_navigates_from_every_list_view() {
+        for view in [View::ResourceBrowser, View::CostExplorer, View::ActivityLog, View::GlobalSearch] {
+            let mut s = state_with_contexts(Some("sub-a"));
+            s.active_view = view.clone();
+            assert!(
+                matches!(handle_input(key(KeyCode::Char('1')), &s), Some(Command::NavigateTo(View::ContextSwitcher))),
+                "{:?}",
+                view
+            );
+        }
+    }
+
+    #[test]
+    fn question_mark_with_shift_opens_help() {
+        let s = state_with_contexts(Some("sub-a"));
+        let cmd = handle_input(key_mod(KeyCode::Char('?'), KeyModifiers::SHIFT), &s);
+        assert!(matches!(cmd, Some(Command::NavigateTo(View::Help))));
+    }
+
+    #[test]
+    fn esc_in_help_returns_to_previous_view() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::Help;
+        s.previous_view = View::CostExplorer;
+        assert!(matches!(handle_input(key(KeyCode::Esc), &s), Some(Command::NavigateTo(View::CostExplorer))));
+    }
+
+    #[test]
+    fn enter_in_global_search_routes_by_type() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::GlobalSearch;
+        s.global_resources = vec![global("web-01", VM_TYPE, "sub-a")];
+        assert!(matches!(
+            handle_input(key(KeyCode::Enter), &s),
+            Some(Command::OpenRunCommand { ref vm_name, .. }) if vm_name == "web-01"
+        ));
+        s.global_resources = vec![global("st01", STORAGE_TYPE, "sub-b")];
+        assert!(matches!(
+            handle_input(key(KeyCode::Enter), &s),
+            Some(Command::InContext { ref subscription_id, .. }) if subscription_id == "sub-b"
+        ));
+    }
+
+    #[test]
+    fn editor_focus_swallows_letters_but_f5_reaches_registry() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::RunCommand;
+        s.run_command = Some(RunCommandSession::new("sub-a".into(), "rg-app".into(), "vm-1".into()));
+        assert!(matches!(handle_input(key(KeyCode::Char('q')), &s), Some(Command::ScriptInput(_))));
+        // Empty script: RunScript does not apply.
+        assert!(handle_input(key(KeyCode::F(5)), &s).is_none());
+        if let Some(session) = s.run_command.as_mut() {
+            session.editor.insert_str("Get-Date");
+        }
+        assert!(matches!(handle_input(key(KeyCode::F(5)), &s), Some(Command::OpenModal(_))));
+    }
+
+    #[test]
+    fn cost_backspace_scopes_up() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.active_view = View::CostExplorer;
+        assert!(matches!(handle_input(key(KeyCode::Backspace), &s), Some(Command::CostScopeUp)));
     }
 }

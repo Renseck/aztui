@@ -159,9 +159,6 @@ pub enum Command {
     /// list navigation.
     SetGlobalSearchFocus(bool),
 
-    /// Open the selected global-search result (type-aware routing).
-    OpenGlobalResource,
-
     /// Install a missing `az` CLI extension by name, then retry global search.
     InstallExtension(String),
 

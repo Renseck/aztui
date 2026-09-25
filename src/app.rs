@@ -572,50 +572,6 @@ pub async fn dispatch_command(
             state.pending_operations.insert(op_id, op);
         }
 
-        Command::OpenGlobalResource => {
-            let row = match crate::ui::widgets::global_search::selected_global_resource(state) {
-                Some(r) => r.clone(),
-                None => return events,
-            };
-
-            if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
-                let _ = cmd_tx.try_send(Command::OpenRunCommand {
-                    subscription_id: row.subscription_id.clone(),
-                    resource_group: row.resource_group.clone(),
-                    vm_name: row.name.clone(),
-                });
-                return events;
-            }
-
-            // Non-VM: resolve full context, switch, then drill into the RG.
-            let ctx = state
-                .subscriptions_by_tenant
-                .values()
-                .flatten()
-                .find(|s| s.id == row.subscription_id)
-                .and_then(|sub| {
-                    state.tenants.iter().find(|t| t.id == sub.tenant_id).map(|tenant| {
-                        AzureContext { tenant: tenant.clone(), subscription: sub.clone() }
-                    })
-                });
-
-            match ctx {
-                Some(ctx) => {
-                    state.pending_rg_focus = Some(row.resource_group.clone());
-                    let _ = cmd_tx.try_send(Command::SwitchContext(ctx));
-                    let _ = cmd_tx.try_send(Command::NavigateTo(View::ResourceBrowser));
-                }
-                None => {
-                    let err = AppError::new(
-                        ErrorKind::SubscriptionNotFound,
-                        "That resource's subscription is not in your context list",
-                    );
-                    state.last_error = Some(err.clone());
-                    events.push(Event::ErrorOccurred(err));
-                }
-            }
-        }
-
         Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
             state.run_command = Some(RunCommandSession::new(
                 subscription_id,
@@ -1553,30 +1509,6 @@ pub(crate) fn clamp_increment(cursor: usize, len: usize) -> usize {
 }
 
 /* ============================================================================================== */
-/// Decides what a global-search `Enter` does for `row`. VMs open the run-command
-/// view directly (works cross-subscription because the run-command passes
-/// `--subscription` explicitly). Any other type switches the active context to
-/// the row's subscription (when it is present in `ctx`), after which the caller
-/// drives the resource-browser drill-in.
-#[cfg(test)]
-pub(crate) fn global_resource_command(
-    row: &crate::domain::models::GlobalResource,
-    ctx: Option<&AzureContext>,
-) -> Command {
-    if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
-        return Command::OpenRunCommand {
-            subscription_id: row.subscription_id.clone(),
-            resource_group: row.resource_group.clone(),
-            vm_name: row.name.clone(),
-        };
-    }
-    match ctx {
-        Some(c) => Command::SwitchContext(c.clone()),
-        None => Command::UpdateGlobalSearch(row.subscription_id.clone()), // unreachable in practice; placeholder routing
-    }
-}
-
-/* ============================================================================================== */
 /// Looks up the full [`AzureContext`] (tenant + subscription) for a
 /// subscription ID in the loaded context list.
 fn resolve_context(state: &AppState, subscription_id: &str) -> Option<AzureContext> {
@@ -1639,43 +1571,6 @@ fn key_to_input(key: crossterm::event::KeyEvent) -> Input {
 #[cfg(test)]
 mod nav_tests {
     use super::*;
-    use crate::command::Command;
-    use crate::domain::models::{GlobalResource, SubscriptionState};
-
-    fn vm_row() -> GlobalResource {
-        GlobalResource {
-            id: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/web-01".into(),
-            name: "web-01".into(),
-            resource_type: "microsoft.compute/virtualmachines".into(),
-            resource_group: "rg".into(),
-            subscription_id: "s".into(),
-            location: "westeurope".into(),
-        }
-    }
-
-    #[test]
-    fn vm_row_routes_to_open_run_command() {
-        let cmd = global_resource_command(&vm_row(), None);
-        match cmd {
-            Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
-                assert_eq!(subscription_id, "s");
-                assert_eq!(resource_group, "rg");
-                assert_eq!(vm_name, "web-01");
-            }
-            other => panic!("expected OpenRunCommand, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn non_vm_row_routes_to_switch_context_when_context_resolvable() {
-        let row = GlobalResource { resource_type: "microsoft.storage/storageaccounts".into(), ..vm_row() };
-        let ctx = AzureContext {
-            tenant: Tenant { id: "t".into(), tenant_display_name: "T".into(), tenant_default_domain: "d".into() },
-            subscription: Subscription { id: "s".into(), name: "S".into(), tenant_id: "t".into(), state: SubscriptionState::Enabled },
-        };
-        let cmd = global_resource_command(&row, Some(&ctx));
-        assert!(matches!(cmd, Command::SwitchContext(_)));
-    }
 
     #[test]
     fn clamp_increment_advances_within_bounds() {
