@@ -4,7 +4,7 @@ pub mod cost_explorer;
 pub mod global_search;
 pub mod hint_bar;
 pub mod modal;
-pub mod quick_switch;
+pub mod palette;
 pub mod resource_browser;
 pub mod run_command;
 pub mod search_input;

@@ -28,6 +28,13 @@ pub enum Command {
     /// Fetch the currently active context from `az account show --output json`.
     FetchActiveContext,
 
+    /// Run `then` in the context of `subscription_id`: immediately when it is
+    /// the active subscription, otherwise after switching to it.
+    InContext {
+        subscription_id: String,
+        then: Box<Command>,
+    },
+
     /* ======================================= Navigation ======================================= */
 
     /// Change the active top-level view.
@@ -41,6 +48,23 @@ pub enum Command {
 
     /// Close the current modal.
     CloseModal,
+
+    /* ======================================== Palette ========================================= */
+
+    /// Open the command palette in the given mode.
+    OpenPalette(crate::palette::PaletteMode),
+
+    /// Replace the palette query and rebuild its rows.
+    PaletteQuery(String),
+
+    /// Drill into the selected resource/context row's actions.
+    PaletteDrill,
+
+    /// Leave target actions and restore the previous query.
+    PaletteBack,
+
+    /// Run the selected palette row.
+    PaletteActivate,
 
     /* ===================================== List navigation ==================================== */
 
@@ -63,6 +87,9 @@ pub enum Command {
 
     /// Update the resource browser search query.
     UpdateResourceSearch(String),
+
+    /// Open the resource browser with the named resource group selected.
+    OpenResourceGroup(String),
 
     /* ===================================== Cost (Phase 4) ===================================== */
 
@@ -148,9 +175,6 @@ pub enum Command {
     /// The query stays applied while unfocused so results remain filtered for
     /// list navigation.
     SetGlobalSearchFocus(bool),
-
-    /// Open the selected global-search result (type-aware routing).
-    OpenGlobalResource,
 
     /// Install a missing `az` CLI extension by name, then retry global search.
     InstallExtension(String),

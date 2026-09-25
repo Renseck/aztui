@@ -21,7 +21,7 @@ beneath. The active context is marked, search filters the list in real time.
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                                                                     │    │
 │  │  ▸ Contoso Ltd  (contoso.onmicrosoft.com)                           │    │
-│  │      [» contoso-terraform-prod       ] �-� active    Enabled          │    │
+│  │      [» contoso-terraform-prod       ] �-� active    Enabled          │    │
 │  │        contoso-terraform-dev                       Enabled          │    │
 │  │        contoso-shared-services                     Enabled          │    │
 │  │       (contoso-legacy-sandbox)                     Disabled         │    │
@@ -37,56 +37,59 @@ beneath. The active context is marked, search filters the list in real time.
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod        ↻ Refreshing...    3s ago    │ 
+│  �-� Contoso Ltd / contoso-terraform-prod        ↻ Refreshing...    3s ago    │ 
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Legend**:
 - `▸` — tenant section header (collapsible in future)
 - `[» ... ]` — currently selected row (cursor)
-- `�-� active` — the context that `az` is currently pointed at
+- `�-� active` — the context that `az` is currently pointed at
 - `(parentheses)` — disabled/warned subscription, visually dimmed
 - Bottom bar — status: active context, pending operation spinner, cache age
 
 ---
 
-## 2. Quick Switch Modal (Ctrl+P overlay)
+## 2. Command Palette (`:` overlay; `Ctrl+G` = contexts only)
 
-Overlays on top of any view. Flat list of all tenant+subscription pairs,
-fuzzy-filtered. Recent contexts appear first.
+Overlays any view. Sections are fuzzy-ranked independently and omitted when
+empty. `Tab` on a resource or context drills into its actions.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  aztui                                                          ? for help │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌───────────────────────────────────────────────────────────────┐          │
-│  │  Switch context: fab-prod_                                    │          │
-│  │                                                               │          │
-│  │  RECENT                                                       │          │
-│  │  [» Fabrikam Inc / fabrikam-terraform-prod  ]                 │          │
-│  │    Contoso Ltd / contoso-terraform-prod                       │          │
-│  │                                                               │          │
-│  │  ALL MATCHES                                                  │          │
-│  │    Fabrikam Inc / fabrikam-terraform-prod                     │          │
-│  │    Fabrikam Inc / fabrikam-production                         │          │
-│  │                                                               │          │
-│  │                                                               │          │
-│  │                                                               │          │
-│  │  Enter: switch  Esc: cancel                                   │          │
-│  └───────────────────────────────────────────────────────────────┘          │
-│                                                                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod                            3s ago   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────── Command palette ────────────────────────┐
+│  > web_                                                         │
+│─────────────────────────────────────────────────────────────────│
+│  ACTIONS                                                        │
+│ » Go to resource browser                                     2  │
+│  CONTEXTS                                                       │
+│    Contoso Ltd / contoso-web-prod                               │
+│  RESOURCES                                                      │
+│    web-01                      VM            rg-web     prod    │
+│    web-01-nic                  NIC           rg-web     prod    │
+│                 ↵ run · Tab actions · Esc close                 │
+└─────────────────────────────────────────────────────────────────┘
+
+  Tab on web-01:
+
+┌─────────────────────────── web-01 › ────────────────────────────┐
+│  > _                                                            │
+│─────────────────────────────────────────────────────────────────│
+│  ACTIONS                                                        │
+│ » Run command: web-01                                        ↵  │
+│    Activity log: web-01                                      a  │
+│    Cost for resource group: web-01                           c  │
+│    Go to resource group: web-01                                 │
+│                        ↵ run · Esc back                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Notes**:
-- The modal is centered and does not fill the full terminal width
-- Background view (context switcher or any other) is dimmed behind the overlay
-- `RECENT` section shows MRU contexts, limited by `max_recent_contexts` config
-- `ALL MATCHES` shows fuzzy-filtered results from the full context list
-- If a result appears in both RECENT and ALL MATCHES, it's deduplicated
+- ACTIONS act on the view's selection when the palette opened; the right column
+  shows each action's key.
+- RESOURCES is hidden on an empty query ("Type to search N resources") and
+  capped at 50; CONTEXTS is capped at 20 (RECENT first on an empty query).
+- `Ctrl+G` shows only contexts, as RECENT / ALL MATCHES, uncapped.
+- `j`/`k` type into the query; use the arrow keys to move.
 
 ---
 
@@ -120,7 +123,7 @@ the right.
 │  └──────────────────────────┘  └──────────────────────────────────────┘     │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod                            5s ago   │
+│  �-� Contoso Ltd / contoso-terraform-prod                            5s ago   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -142,7 +145,7 @@ Cost summary for the active subscription, with per-service breakdown.
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  Subscription: contoso-terraform-prod                                       │
-│  Period: 2026-03-01 → 2026-03-31                    [ �-� prev ] [ next ▸ ]  │
+│  Period: 2026-03-01 → 2026-03-31                    [ �-� prev ] [ next ▸ ]  │
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                                                                     │    │
@@ -161,7 +164,7 @@ Cost summary for the active subscription, with per-service breakdown.
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod                           12s ago   │
+│  �-� Contoso Ltd / contoso-terraform-prod                           12s ago   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -206,7 +209,7 @@ Full keybinding reference and command overview.
 │  aztui v0.1.0                                                               │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod                            3s ago   │
+│  �-� Contoso Ltd / contoso-terraform-prod                            3s ago   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -280,7 +283,7 @@ error occurs.
 │       └──────────────────────────────────────────────────────┘              │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod   ⚠ Auth expired          3s ago   │
+│  �-� Contoso Ltd / contoso-terraform-prod   ⚠ Auth expired          3s ago   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -323,7 +326,7 @@ Generic confirmation for destructive or significant actions.
 │                                                                             │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  �-� Contoso Ltd / contoso-terraform-prod                            3s ago   │
+│  �-� Contoso Ltd / contoso-terraform-prod                            3s ago   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -378,7 +381,7 @@ list is being fetched.
 These are guidelines, not pixel-perfect specs. The TUI should adapt to
 terminal size.
 
-- **Minimum terminal size**: 80 columns �- 24 rows
+- **Minimum terminal size**: 80 columns �- 24 rows
 - **Status bar**: 1 row, always at bottom (configurable to top)
 - **Title bar**: 1 row, always at top
 - **Content area**: remaining rows between title and status bar

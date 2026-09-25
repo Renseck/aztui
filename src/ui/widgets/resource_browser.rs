@@ -136,20 +136,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     render_left_pane(frame, panes[0], state, theme);
     render_right_pane(frame, panes[1], state, theme);
 
-    crate::ui::widgets::hint_bar::render(
-        frame,
-        outer[2],
-        &[
-            ("Tab", "panes"),
-            ("/", "search"),
-            ("↵", "run (VM)"),
-            ("a", "activity"),
-            ("c", "costs"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        theme,
-    );
+    crate::ui::widgets::hint_bar::render(frame, outer[2], &crate::actions::hints_for(state), theme);
 }
 
 /* ============================================================================================== */
@@ -277,8 +264,6 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
     let rg_name = selected_resource_group_name(state).unwrap_or_default();
     let resources = filtered_resources(state);
     let count = resources.len();
-    let sel_cursor = state.resource_cursor.min(count.saturating_sub(1));
-    let selected_is_vm = resources.get(sel_cursor).map_or(false, |r| is_vm(&r.resource_type));
 
     let base_title = if rg_name.is_empty() {
         " Resources ".to_string()
@@ -286,14 +271,7 @@ fn render_right_pane(frame: &mut Frame, area: Rect, state: &AppState, theme: &Th
         format!(" {} ({}) ", rg_name, count)
     };
 
-    let title = if is_focused && selected_is_vm {
-        Line::from(vec![
-            Span::styled(base_title, theme.surface_style().fg(theme.text)),
-            Span::styled("↵ run-command (enter) ", theme.hint_style()),
-        ])
-    } else {
-        Line::from(Span::styled(base_title, theme.surface_style().fg(theme.text)))
-    };
+    let title = Line::from(Span::styled(base_title, theme.surface_style().fg(theme.text)));
 
     let block = Block::default()
         .title(title)
@@ -417,59 +395,6 @@ pub fn filtered_resource_groups(state: &AppState) -> Vec<&ResourceGroup> {
     }
 
     scored.into_iter().map(|(_, rg)| rg).collect()
-}
-
-/// Builds the [`ActivityScope`] for the current resource-browser selection:
-/// the focused resource (right pane) or resource group (left pane). Returns
-/// `None` if there is no active subscription or no selection.
-pub fn activity_scope_for_selection(state: &AppState) -> Option<crate::domain::activity::ActivityScope> {
-    use crate::app::Pane;
-    use crate::domain::activity::ActivityScope;
-
-    let sub = state.active_context.as_ref()?.subscription.id.clone();
-
-    match state.resource_browser_focus {
-        Pane::Left => {
-            let rg = selected_resource_group_name(state)?;
-            Some(ActivityScope::ResourceGroup { subscription_id: sub, resource_group: rg })
-        }
-        Pane::Right => {
-            let filtered = filtered_resources(state);
-            let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
-            let res = filtered.get(cursor)?;
-            Some(ActivityScope::Resource {
-                subscription_id: sub,
-                resource_group: res.resource_group.clone(),
-                resource_id: res.id.clone(),
-                resource_name: res.name.clone(),
-            })
-        }
-    }
-}
-
-/* ============================================================================================== */
-
-/// A selected VM's coordinates, for opening the run-command view.
-pub struct VmTarget {
-    pub subscription_id: String,
-    pub resource_group: String,
-    pub vm_name: String,
-}
-
-/// Returns the [`VmTarget`] for the right-pane selection if it is a VM, else `None`.
-pub fn selected_vm_target(state: &AppState) -> Option<VmTarget> {
-    let filtered = filtered_resources(state);
-    let cursor = state.resource_cursor.min(filtered.len().saturating_sub(1));
-    let res = filtered.get(cursor)?;
-    if !is_vm(&res.resource_type) {
-        return None;
-    }
-    let subscription_id = state.active_context.as_ref()?.subscription.id.clone();
-    Some(VmTarget {
-        subscription_id,
-        resource_group: res.resource_group.clone(),
-        vm_name: res.name.clone(),
-    })
 }
 
 /* ============================================================================================== */

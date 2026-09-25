@@ -47,29 +47,7 @@ fn render_summary(
     render_header(frame, layout[0], state, summary, theme);
     render_breakdown(frame, layout[1], state, summary, theme);
 
-    let drill_hints: &[(&str, &str)] = match &state.cost_view {
-        CostView::Subscription(CostGrouping::ByService) => &[
-            ("[/]", "period"),
-            ("g", "by RG"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        CostView::Subscription(CostGrouping::ByResourceGroup) => &[
-            ("[/]", "period"),
-            ("g", "by service"),
-            ("↵", "drill"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        CostView::ResourceGroup(_) => &[
-            ("[/]", "period"),
-            ("r", "refresh"),
-            ("Bksp", "up"),
-            ("Esc", "up"),
-        ],
-    };
-
-    crate::ui::widgets::hint_bar::render(frame, layout[2], drill_hints, theme);
+    crate::ui::widgets::hint_bar::render(frame, layout[2], &crate::actions::hints_for(state), theme);
 }
 
 /* ============================================================================================== */

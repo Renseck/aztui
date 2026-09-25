@@ -15,8 +15,9 @@ flag memorization and repetitive CLI workflows.
   subscription. Drill-down navigation with search and filtering.
 - **Cost explorer** — View cost summaries by subscription or resource group.
   Per-service breakdown with inline bar charts and period navigation.
-- **Quick switch** (`Ctrl+G`) — Fuzzy-find any tenant/subscription combo
-  without leaving your current view.
+- **Command palette** (`:`) — One fuzzy search over actions, contexts, and
+  every resource you can see. `Tab` on a resource lists what you can do with it (run command, activity log, cost). The palette also shows each action's key, so it doubles as a cheat sheet.
+- **Quick switch** (`Ctrl+G`) — The palette in contexts-only mode: fuzzy-find any tenant/subscription combo without leaving your current view.
 - **Encrypted cache** — Optionally protect cached data with a master password
   (Argon2id + AES-256-GCM). OS keyring integration available.
 
@@ -85,7 +86,8 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
 | `Enter` | Select / confirm |
 | `/` | Focus search input |
 | `Esc` | Clear search / close modal / back |
-| `Ctrl+G` | Quick switch context |
+| `:` | Command palette (actions, contexts, resources) |
+| `Ctrl+G` | Quick switch context (palette, contexts only) |
 | `Tab` / `←`/`→` | Switch pane (resource browser) |
 | `[` or `h` | Previous month (cost explorer) |
 | `]` or `l` | Next month (cost explorer) |
@@ -97,6 +99,9 @@ preserved (use `aztui init --force` to regenerate it with new defaults).
 | `c` | Cost for selected resource group (resource browser) |
 | `?` | Toggle help screen |
 | `q` | Quit |
+
+Hint bars and the help screen (`?`) are generated from the same action
+registry as the keybindings, so they always match what the keys do.
 
 ### Views
 

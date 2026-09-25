@@ -162,16 +162,35 @@ pub enum View {
 
 #[derive(Debug, Clone)]
 pub enum Modal {
-    /// Ctrl+P style fuzzy finder for quick context switching.
-    QuickSwitch { query: String, filtered: Vec<AzureContext> },
-    /// Confirmation dialog (e.g. "Switch to tenant X?").
-    Confirm { message: String, on_confirm: Command },
+    /// Command palette (`:`), or quick switch (`Ctrl+G`, PaletteMode::ContextsOnly).
+    Palette(PaletteState),
+    /// Confirmation dialog (e.g. "Run this script on web-01?").
+    Confirm { message: String, on_confirm: Box<Command> },
     /// Master password prompt.
-    PasswordPrompt,
+    PasswordPrompt { input: String, error: Option<String>, mode: PasswordMode },
+    /// Activity log entry detail.
+    ActivityDetail(Box<ActivityLogEntry>),
     /// Error detail view.
     ErrorDetail(AppError),
 }
+
 ```
+### Action registry (`src/actions.rs`)
+
+```rs
+pub enum ActionId { GoContexts, /* … */ SwitchToContext }  // exhaustive
+impl ActionId {
+    pub const ALL: &'static [ActionId];
+    pub fn spec(self) -> ActionSpec;                                  // label, key, scope, hint
+    pub fn build(self, s: &AppState, t: &Target) -> Option<Command>;  // None = not applicable
+}
+pub enum Target { None, Context(AzureContext), ResourceGroup { .. }, Resource { .. } }
+pub enum Scope { Global, View(&'static [View]), Target(&'static [TargetKind]) }
+```
+
+Key resolution precedence: View-scoped, then Target-scoped, then Global.
+`Command::InContext { subscription_id, then }` runs `then` after switching to
+`subscription_id` when it is not already active.
 
 ## 3. COMMANDS — user/system intent (request side)
 

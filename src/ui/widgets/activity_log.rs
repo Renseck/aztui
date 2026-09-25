@@ -86,20 +86,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         theme,
     );
 
-    crate::ui::widgets::hint_bar::render(
-        frame,
-        layout[2],
-        &[
-            ("[/]", "window"),
-            ("s", "scope"),
-            ("f", "failed-only"),
-            ("/", "search"),
-            ("↵", "detail"),
-            ("r", "refresh"),
-            ("Esc", "back"),
-        ],
-        theme,
-    );
+    crate::ui::widgets::hint_bar::render(frame, layout[2], &crate::actions::hints_for(state), theme);
 
     // Title: scope + window + failed-only marker.
     let sub_name = state

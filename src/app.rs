@@ -8,6 +8,7 @@ use tokio::sync::{mpsc};
 use ratatui::widgets::ListState;
 use tui_textarea::{Input, Key, TextArea};
 
+use crate::actions::{self, Target};
 use crate::command::Command;
 use crate::config::AppConfig;
 use crate::domain::activity::{ActivityLogProvider, ActivityScope, ActivityWindow};
@@ -19,6 +20,7 @@ use crate::domain::resources::ResourceProvider;
 use crate::domain::vm::VmProvider;
 use crate::errors::{AppError, ErrorKind};
 use crate::event::Event;
+use crate::palette::{PaletteMode, PaletteRow, PaletteState};
 use crate::security::{SecurityManager};
 
 
@@ -67,11 +69,7 @@ pub enum CostView {
 /// type cycle with [`Command`].
 #[derive(Debug, Clone)]
 pub enum Modal {
-    QuickSwitch {
-        query: String,
-        filtered: Vec<AzureContext>,
-        cursor: usize,
-    },
+    Palette(crate::palette::PaletteState),
     Confirm {
         message: String,
         on_confirm: Box<Command>,
@@ -205,6 +203,7 @@ pub struct ScrollStates {
     pub resource_groups: RefCell<ListState>,
     pub resources: RefCell<ListState>,
     pub global_search: RefCell<ListState>,
+    pub palette: RefCell<ListState>,
 }
 
 /* ============================================================================================== */
@@ -231,6 +230,8 @@ pub struct AppState {
     pub subscriptions_by_tenant: HashMap<String, Vec<Subscription>>,
     pub active_context: Option<AzureContext>,
     pub recent_contexts: Vec<AzureContext>,
+    /// Command to run once an in-flight context switch succeeds (see `InContext`).
+    pub pending_after_switch: Option<Command>,
 
     // Navigation & UI
     pub active_view: View,
@@ -251,6 +252,8 @@ pub struct AppState {
 
     // Global search (Resource Graph)
     pub global_resources: Vec<GlobalResource>,
+    // Precomputed palette match strings, index-aligned with `global_resources`.
+    pub resource_haystacks: Vec<String>,
     pub global_search_query: String,
     pub global_search_cursor: usize,
     pub pending_rg_focus: Option<String>,
@@ -302,6 +305,7 @@ impl AppState {
             subscriptions_by_tenant: HashMap::new(),
             active_context: None,
             recent_contexts: Vec::new(),
+            pending_after_switch: None,
             active_view: View::ContextSwitcher,
             previous_view: View::ContextSwitcher,
             search_query: String::new(),
@@ -316,6 +320,7 @@ impl AppState {
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
             global_resources: Vec::new(),
+            resource_haystacks: Vec::new(),
             global_search_query: String::new(),
             global_search_cursor: 0,
             pending_rg_focus: None,
@@ -384,7 +389,7 @@ const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 const SLOT_COST: OperationId = u64::MAX - 5;
 const SLOT_RUN_COMMAND: OperationId = u64::MAX - 6;
 const SLOT_ACTIVITY: OperationId = u64::MAX - 7;
-const SLOT_GRAPH: OperationId = u64::MAX - 8;
+pub(crate) const SLOT_GRAPH: OperationId = u64::MAX - 8;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -479,6 +484,25 @@ pub async fn dispatch_command(
             state.resource_search_query = q;
         }
 
+        Command::OpenResourceGroup(rg_name) => {
+            state.active_view = View::ResourceBrowser;
+            state.resource_browser_focus = Pane::Left;
+            state.search_query.clear();
+            state.search_focused = false;
+            state.resource_search_query.clear();
+            events.push(Event::ViewChanged(View::ResourceBrowser));
+
+            if state.resource_groups.is_empty() {
+                state.pending_rg_focus = Some(rg_name);
+                let _ = cmd_tx.try_send(Command::ListResourceGroups);
+            } else {
+                if let Some(idx) = state.resource_groups.iter().position(|g| g.name == rg_name) {
+                    state.resource_group_cursor = idx;
+                }
+                let _ = cmd_tx.try_send(Command::ListResources(rg_name));
+            }
+        }
+
         Command::UpdateGlobalSearch(q) => {
             state.global_search_query = q;
             state.global_search_cursor = 0;
@@ -508,6 +532,7 @@ pub async fn dispatch_command(
             };
             events.push(Event::OperationStarted(op.clone()));
             state.pending_operations.insert(op_id, op);
+            crate::palette::refresh(state);
         }
 
         Command::GlobalInventoryResult(result) => {
@@ -516,6 +541,7 @@ pub async fn dispatch_command(
             match result {
                 Ok(rows) => {
                     state.global_resources = rows;
+                    state.resource_haystacks = crate::palette::resource_haystacks(state);
                     state.global_search_cursor = 0;
                 }
                 Err(e) => {
@@ -523,6 +549,7 @@ pub async fn dispatch_command(
                     events.push(Event::ErrorOccurred(e));
                 }
             }
+            crate::palette::refresh(state);
         }
 
         Command::InstallExtension(name) => {
@@ -548,50 +575,6 @@ pub async fn dispatch_command(
             };
             events.push(Event::OperationStarted(op.clone()));
             state.pending_operations.insert(op_id, op);
-        }
-
-        Command::OpenGlobalResource => {
-            let row = match crate::ui::widgets::global_search::selected_global_resource(state) {
-                Some(r) => r.clone(),
-                None => return events,
-            };
-
-            if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
-                let _ = cmd_tx.try_send(Command::OpenRunCommand {
-                    subscription_id: row.subscription_id.clone(),
-                    resource_group: row.resource_group.clone(),
-                    vm_name: row.name.clone(),
-                });
-                return events;
-            }
-
-            // Non-VM: resolve full context, switch, then drill into the RG.
-            let ctx = state
-                .subscriptions_by_tenant
-                .values()
-                .flatten()
-                .find(|s| s.id == row.subscription_id)
-                .and_then(|sub| {
-                    state.tenants.iter().find(|t| t.id == sub.tenant_id).map(|tenant| {
-                        AzureContext { tenant: tenant.clone(), subscription: sub.clone() }
-                    })
-                });
-
-            match ctx {
-                Some(ctx) => {
-                    state.pending_rg_focus = Some(row.resource_group.clone());
-                    let _ = cmd_tx.try_send(Command::SwitchContext(ctx));
-                    let _ = cmd_tx.try_send(Command::NavigateTo(View::ResourceBrowser));
-                }
-                None => {
-                    let err = AppError::new(
-                        ErrorKind::SubscriptionNotFound,
-                        "That resource's subscription is not in your context list",
-                    );
-                    state.last_error = Some(err.clone());
-                    events.push(Event::ErrorOccurred(err));
-                }
-            }
         }
 
         Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
@@ -804,15 +787,83 @@ pub async fn dispatch_command(
             events.push(Event::ModalClosed);
         }
 
+        
+        /* ====================================== Palette ======================================= */
+
+        Command::OpenPalette(mode) => {
+            let wants_inventory = mode == PaletteMode::All
+                && state.global_resources.is_empty()
+                && state.active_context.is_some()
+                && !state.pending_operations.contains_key(&SLOT_GRAPH);
+            let palette = PaletteState::new(state, mode);
+            events.push(Event::ModalOpened(Modal::Palette(palette.clone())));
+            state.modal = Some(Modal::Palette(palette));
+            if wants_inventory {
+                let _ = cmd_tx.try_send(Command::FetchGlobalInventory);
+            }
+        }
+
+        Command::PaletteQuery(q) => {
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                p.query = q;
+                p.cursor = 0;
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteDrill => {
+            let target = match &state.modal {
+                Some(Modal::Palette(p)) => match p.selected() {
+                    Some(PaletteRow::Resource(idx)) => state.global_resources.get(*idx).map(Target::from_global),
+                    Some(PaletteRow::Context(ctx)) => Some(Target::Context(ctx.clone())),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let (Some(target), Some(Modal::Palette(p))) = (target, state.modal.as_mut()) {
+                p.return_query = std::mem::take(&mut p.query);
+                p.mode = PaletteMode::TargetActions(target);
+                p.cursor = 0;
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteBack => {
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                if matches!(p.mode, PaletteMode::TargetActions(_)) {
+                    p.mode = PaletteMode::All;
+                    p.query = std::mem::take(&mut p.return_query);
+                    p.cursor = 0;
+                }
+            }
+            crate::palette::refresh(state);
+        }
+
+        Command::PaletteActivate => {
+            let cmd = match &state.modal {
+                Some(Modal::Palette(p)) => match p.selected() {
+                    Some(PaletteRow::Action(id, target)) => id.build(state, target),
+                    Some(PaletteRow::Context(ctx)) => Some(Command::SwitchContext(ctx.clone())),
+                    Some(PaletteRow::Resource(idx)) => state
+                        .global_resources
+                        .get(*idx)
+                        .map(Target::from_global)
+                        .and_then(|t| actions::default_action(&t).and_then(|id| id.build(state, &t))),
+                    _ => None,
+                },
+                _ => None,
+            };
+            state.modal = None;
+            events.push(Event::ModalClosed);
+            if let Some(cmd) = cmd {
+                let _ = cmd_tx.try_send(cmd);
+            }
+        }
+
         Command::NavUp => {
             state.last_interaction = Instant::now();
-            if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
-                state.modal.as_mut()
-            {
-                if *cursor > 0 {
-                    *cursor -= 1;
-                }
-                let _ = filtered;
+                        if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                p.cursor = p.cursor.saturating_sub(1);
             } else if state.active_view == View::ResourceBrowser {
                 match state.resource_browser_focus {
                     Pane::Left => {
@@ -851,13 +902,9 @@ pub async fn dispatch_command(
 
         Command::NavDown => {
             state.last_interaction = Instant::now();
-            if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
-                state.modal.as_mut()
-            {
-                let max = filtered.len().saturating_sub(1);
-                if *cursor < max {
-                    *cursor += 1;
-                }
+            if let Some(Modal::Palette(p)) = state.modal.as_mut() {
+                let len = p.selectable_count();
+                p.cursor = clamp_increment(p.cursor, len);
             } else if state.active_view == View::ResourceBrowser {
                 match state.resource_browser_focus {
                     Pane::Left => {
@@ -1132,21 +1179,7 @@ pub async fn dispatch_command(
             let tx = cmd_tx.clone();
             let auth = Arc::clone(&auth);
 
-            let ctx = state
-                .subscriptions_by_tenant
-                .values()
-                .flatten()
-                .find(|s| s.id == sub_id)
-                .and_then(|sub| {
-                    state
-                        .tenants
-                        .iter()
-                        .find(|t| t.id == sub.tenant_id)
-                        .map(|tenant| AzureContext {
-                            tenant: tenant.clone(),
-                            subscription: sub.clone(),
-                        })
-                });
+            let ctx = resolve_context(state, &sub_id);
             
             if let Some(ctx) = ctx {
                 let ctx_clone = ctx.clone();
@@ -1168,6 +1201,32 @@ pub async fn dispatch_command(
                 };
                 events.push(Event::OperationStarted(op.clone()));
                 state.pending_operations.insert(op_id, op);
+            }
+        }
+        
+        Command::InContext { subscription_id, then } => {
+            let is_active = state
+                .active_context
+                .as_ref()
+                .map_or(false, |c| c.subscription.id == subscription_id);
+            if is_active {
+                let _ = cmd_tx.try_send(*then);
+                return events;
+            }
+            match resolve_context(state, &subscription_id) {
+                Some(ctx) => {
+                    // Last switch wins: a newer InContext replaces the pending command.
+                    state.pending_after_switch = Some(*then);
+                    let _ = cmd_tx.try_send(Command::SwitchContext(ctx));
+                }
+                None => {
+                    let err = AppError::new(
+                        ErrorKind::SubscriptionNotFound,
+                        "That resource's subscription is not in your context list",
+                    );
+                    state.last_error = Some(err.clone());
+                    events.push(Event::ErrorOccurred(err));
+                }
             }
         }
 
@@ -1219,16 +1278,20 @@ pub async fn dispatch_command(
                     // Clear stale cost data from previous subscription.
                     state.cost_summary = None;
                     state.cost_selected_index = 0;
-                    // Close quick switch modal if open.
-                    if matches!(state.modal, Some(Modal::QuickSwitch { .. })) {
+                    // Close a palette left open over the switch (e.g. Ctrl+G).
+                    if matches!(state.modal, Some(Modal::Palette(_))) {
                         state.modal = None;
                         events.push(Event::ModalClosed);
                     }
                     events.push(Event::ContextChanged(ctx));
+                    if let Some(next) = state.pending_after_switch.take() {
+                        let _ = cmd_tx.try_send(next);
+                    }
                 }
                 Err(e) => {
                     state.last_error = Some(e.clone());
                     events.push(Event::ErrorOccurred(e));
+                    state.pending_after_switch = None;
                 }
             }
         }
@@ -1515,27 +1578,20 @@ pub(crate) fn clamp_increment(cursor: usize, len: usize) -> usize {
 }
 
 /* ============================================================================================== */
-/// Decides what a global-search `Enter` does for `row`. VMs open the run-command
-/// view directly (works cross-subscription because the run-command passes
-/// `--subscription` explicitly). Any other type switches the active context to
-/// the row's subscription (when it is present in `ctx`), after which the caller
-/// drives the resource-browser drill-in.
-#[cfg(test)]
-pub(crate) fn global_resource_command(
-    row: &crate::domain::models::GlobalResource,
-    ctx: Option<&AzureContext>,
-) -> Command {
-    if crate::ui::widgets::resource_browser::is_vm(&row.resource_type) {
-        return Command::OpenRunCommand {
-            subscription_id: row.subscription_id.clone(),
-            resource_group: row.resource_group.clone(),
-            vm_name: row.name.clone(),
-        };
-    }
-    match ctx {
-        Some(c) => Command::SwitchContext(c.clone()),
-        None => Command::UpdateGlobalSearch(row.subscription_id.clone()), // unreachable in practice; placeholder routing
-    }
+/// Looks up the full [`AzureContext`] (tenant + subscription) for a
+/// subscription ID in the loaded context list.
+fn resolve_context(state: &AppState, subscription_id: &str) -> Option<AzureContext> {
+    state
+        .subscriptions_by_tenant
+        .values()
+        .flatten()
+        .find(|s| s.id == subscription_id)
+        .and_then(|sub| {
+            state.tenants.iter().find(|t| t.id == sub.tenant_id).map(|tenant| AzureContext {
+                tenant: tenant.clone(),
+                subscription: sub.clone(),
+            })
+        })
 }
 
 fn abort_slot(state: &mut AppState, slot_id: OperationId) {
@@ -1584,43 +1640,6 @@ fn key_to_input(key: crossterm::event::KeyEvent) -> Input {
 #[cfg(test)]
 mod nav_tests {
     use super::*;
-    use crate::command::Command;
-    use crate::domain::models::{GlobalResource, SubscriptionState};
-
-    fn vm_row() -> GlobalResource {
-        GlobalResource {
-            id: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/web-01".into(),
-            name: "web-01".into(),
-            resource_type: "microsoft.compute/virtualmachines".into(),
-            resource_group: "rg".into(),
-            subscription_id: "s".into(),
-            location: "westeurope".into(),
-        }
-    }
-
-    #[test]
-    fn vm_row_routes_to_open_run_command() {
-        let cmd = global_resource_command(&vm_row(), None);
-        match cmd {
-            Command::OpenRunCommand { subscription_id, resource_group, vm_name } => {
-                assert_eq!(subscription_id, "s");
-                assert_eq!(resource_group, "rg");
-                assert_eq!(vm_name, "web-01");
-            }
-            other => panic!("expected OpenRunCommand, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn non_vm_row_routes_to_switch_context_when_context_resolvable() {
-        let row = GlobalResource { resource_type: "microsoft.storage/storageaccounts".into(), ..vm_row() };
-        let ctx = AzureContext {
-            tenant: Tenant { id: "t".into(), tenant_display_name: "T".into(), tenant_default_domain: "d".into() },
-            subscription: Subscription { id: "s".into(), name: "S".into(), tenant_id: "t".into(), state: SubscriptionState::Enabled },
-        };
-        let cmd = global_resource_command(&row, Some(&ctx));
-        assert!(matches!(cmd, Command::SwitchContext(_)));
-    }
 
     #[test]
     fn clamp_increment_advances_within_bounds() {
@@ -1647,5 +1666,160 @@ mod nav_tests {
         assert_eq!(state.global_search_query, "");
         assert_eq!(state.global_search_cursor, 0);
         assert!(state.pending_rg_focus.is_none());
+    }
+}
+
+
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::palette::{build_palette_rows, resource_haystacks, PaletteMode, PaletteRow};
+    use crate::test_support::{self, VM_TYPE, dispatch, drain, global, state_with_contexts,};
+
+    fn in_context(sub: &str) -> Command {
+        Command::InContext {
+            subscription_id: sub.to_string(),
+            then: Box::new(Command::ListResourceGroups),
+        }
+    }
+
+    #[tokio::test]
+    async fn in_context_same_subscription_queues_then_immediately() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-a")).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+        assert!(s.pending_after_switch.is_none());
+    }
+
+    #[tokio::test]
+    async fn in_context_other_subscription_switches_then_runs_after_success() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-b")).await;
+        let queued = drain(&mut rx);
+        assert!(matches!(queued.as_slice(), [Command::SwitchContext(c)] if c.subscription.id == "sub-b"));
+        assert!(matches!(s.pending_after_switch, Some(Command::ListResourceGroups)));
+
+        let ok = Command::ContextSwitchResult(Ok(test_support::ctx("sub-b", "t1")));
+        let (_, mut rx) = dispatch(&mut s, ok).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+        assert!(s.pending_after_switch.is_none());
+    }
+
+    #[tokio::test]
+    async fn switch_failure_drops_pending_command() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.pending_after_switch = Some(Command::ListResourceGroups);
+        let err = AppError::new(ErrorKind::CliExecutionFailed, "boom");
+        let (_, mut rx) = dispatch(&mut s, Command::ContextSwitchResult(Err(err))).await;
+        assert!(s.pending_after_switch.is_none());
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn in_context_unknown_subscription_reports_error() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, in_context("sub-zzz")).await;
+        assert!(drain(&mut rx).is_empty());
+        assert_eq!(s.last_error.map(|e| e.kind), Some(ErrorKind::SubscriptionNotFound));
+    }
+
+    #[tokio::test]
+    async fn open_resource_group_focuses_loaded_group() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.resource_groups = vec![test_support::resource_group("rg-1"), test_support::resource_group("rg-2")];
+        s.resource_browser_focus = Pane::Right;
+        let (_, mut rx) = dispatch(&mut s, Command::OpenResourceGroup("rg-2".into())).await;
+        assert_eq!(s.active_view, View::ResourceBrowser);
+        assert_eq!(s.resource_browser_focus, Pane::Left);
+        assert_eq!(s.resource_group_cursor, 1);
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResources(rg)] if rg == "rg-2"));
+    }
+
+    #[tokio::test]
+    async fn open_resource_group_defers_until_groups_load() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, Command::OpenResourceGroup("rg-2".into())).await;
+        assert_eq!(s.pending_rg_focus.as_deref(), Some("rg-2"));
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::ListResourceGroups]));
+    }
+
+    fn palette(s: &AppState) -> &crate::palette::PaletteState {
+        match &s.modal {
+            Some(Modal::Palette(p)) => p,
+            other => panic!("expected palette, got {:?}", other),
+        }
+    }
+
+    fn with_vm_inventory() -> AppState {
+        let mut s = state_with_contexts(Some("sub-a"));
+        s.global_resources = vec![global("web-01", VM_TYPE, "sub-a")];
+        s.resource_haystacks = resource_haystacks(&s);
+        s
+    }
+
+    #[tokio::test]
+    async fn open_palette_requests_inventory_when_missing() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        let (_, mut rx) = dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::FetchGlobalInventory]));
+        assert_eq!(palette(&s).mode, PaletteMode::All);
+    }
+
+    #[tokio::test]
+    async fn palette_query_filters_on_the_full_query() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("w".into())).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        let p = palette(&s).clone();
+        assert_eq!(p.query, "web-01");
+        assert_eq!(p.rows, build_palette_rows(&s, &p.mode, "web-01", &p.opened_target));
+    }
+
+    #[tokio::test]
+    async fn palette_drill_then_back_restores_query() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        dispatch(&mut s, Command::PaletteDrill).await;
+        assert!(matches!(palette(&s).mode, PaletteMode::TargetActions(_)));
+        assert_eq!(palette(&s).query, "");
+        dispatch(&mut s, Command::PaletteBack).await;
+        assert_eq!(palette(&s).mode, PaletteMode::All);
+        assert_eq!(palette(&s).query, "web-01");
+    }
+
+    #[tokio::test]
+    async fn palette_activate_on_vm_runs_default_action_and_closes() {
+        let mut s = with_vm_inventory();
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        assert!(matches!(palette(&s).selected(), Some(PaletteRow::Resource(0))));
+        let (_, mut rx) = dispatch(&mut s, Command::PaletteActivate).await;
+        assert!(s.modal.is_none());
+        assert!(matches!(drain(&mut rx).as_slice(), [Command::OpenRunCommand { .. }]));
+    }
+
+    #[tokio::test]
+    async fn nav_keys_move_the_palette_cursor_within_bounds() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::ContextsOnly)).await;
+        dispatch(&mut s, Command::NavDown).await;
+        dispatch(&mut s, Command::NavDown).await;
+        assert_eq!(palette(&s).cursor, 1);
+        dispatch(&mut s, Command::NavUp).await;
+        assert_eq!(palette(&s).cursor, 0);
+    }
+
+    #[tokio::test]
+    async fn inventory_result_refreshes_an_open_palette() {
+        let mut s = state_with_contexts(Some("sub-a"));
+        dispatch(&mut s, Command::OpenPalette(PaletteMode::All)).await;
+        dispatch(&mut s, Command::PaletteQuery("web-01".into())).await;
+        assert!(!palette(&s).rows.contains(&PaletteRow::Resource(0)));
+        let rows = vec![global("web-01", VM_TYPE, "sub-a")];
+        dispatch(&mut s, Command::GlobalInventoryResult(Ok(rows))).await;
+        assert!(palette(&s).rows.contains(&PaletteRow::Resource(0)));
     }
 }

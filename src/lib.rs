@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod app;
 pub mod az;
 pub mod cache;
@@ -6,8 +7,12 @@ pub mod config;
 pub mod domain;
 pub mod errors;
 pub mod event;
+pub mod palette;
 pub mod providers;
 pub mod security;
 pub mod setup;
 pub mod ui;
 pub mod update;
+
+#[cfg(test)]
+pub(crate) mod test_support;
