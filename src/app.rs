@@ -69,11 +69,6 @@ pub enum CostView {
 /// type cycle with [`Command`].
 #[derive(Debug, Clone)]
 pub enum Modal {
-    QuickSwitch {
-        query: String,
-        filtered: Vec<AzureContext>,
-        cursor: usize,
-    },
     Palette(crate::palette::PaletteState),
     Confirm {
         message: String,
@@ -869,13 +864,6 @@ pub async fn dispatch_command(
             state.last_interaction = Instant::now();
                         if let Some(Modal::Palette(p)) = state.modal.as_mut() {
                 p.cursor = p.cursor.saturating_sub(1);
-            } else if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
-                state.modal.as_mut()
-            {
-                if *cursor > 0 {
-                    *cursor -= 1;
-                }
-                let _ = filtered;
             } else if state.active_view == View::ResourceBrowser {
                 match state.resource_browser_focus {
                     Pane::Left => {
@@ -917,13 +905,6 @@ pub async fn dispatch_command(
             if let Some(Modal::Palette(p)) = state.modal.as_mut() {
                 let len = p.selectable_count();
                 p.cursor = clamp_increment(p.cursor, len);
-            } else if let Some(Modal::QuickSwitch { cursor, filtered, .. }) =
-                state.modal.as_mut()
-            {
-                let max = filtered.len().saturating_sub(1);
-                if *cursor < max {
-                    *cursor += 1;
-                }
             } else if state.active_view == View::ResourceBrowser {
                 match state.resource_browser_focus {
                     Pane::Left => {
@@ -1297,8 +1278,8 @@ pub async fn dispatch_command(
                     // Clear stale cost data from previous subscription.
                     state.cost_summary = None;
                     state.cost_selected_index = 0;
-                    // Close quick switch modal if open.
-                    if matches!(state.modal, Some(Modal::QuickSwitch { .. })) {
+                    // Close a palette left open over the switch (e.g. Ctrl+G).
+                    if matches!(state.modal, Some(Modal::Palette(_))) {
                         state.modal = None;
                         events.push(Event::ModalClosed);
                     }

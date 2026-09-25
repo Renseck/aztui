@@ -7,7 +7,8 @@ use crate::app::{AppState, CostGrouping, CostView, Modal, Pane, View};
 use crate::command::Command;
 use crate::domain::activity::ActivityScope;
 use crate::domain::models::{AzureContext, GlobalResource};
-use crate::ui::widgets::{context_switcher, cost_explorer, global_search, quick_switch, resource_browser};
+use crate::palette::PaletteMode;
+use crate::ui::widgets::{context_switcher, cost_explorer, global_search, resource_browser};
 
 /* ============================================================================================== */
 /*                                             Targets                                            */
@@ -183,6 +184,7 @@ pub enum ActionId {
     GoCost,
     GoActivity,
     GoGlobalSearch,
+    OpenPalette,
     QuickSwitch,
     Help,
     Quit,
@@ -223,6 +225,7 @@ impl ActionId {
         ActionId::GoCost,
         ActionId::GoActivity,
         ActionId::GoGlobalSearch,
+        ActionId::OpenPalette,
         ActionId::QuickSwitch,
         ActionId::Help,
         ActionId::Quit,
@@ -251,6 +254,7 @@ impl ActionId {
             GoCost => action("Go to cost explorer", Some(KeyBinding::plain('3', "3")), Scope::Global, None),
             GoActivity => action("Go to activity log", Some(KeyBinding::plain('4', "4")), Scope::Global, None),
             GoGlobalSearch => action("Go to global search", Some(KeyBinding::plain('5', "5")), Scope::Global, None),
+            OpenPalette => action("Command palette", Some(KeyBinding::plain(':', ":")), Scope::Global, Some("palette")),
             QuickSwitch => action("Switch context", Some(KeyBinding::ctrl('g', "Ctrl+G")), Scope::Global, None),
             Help => action("Help", Some(KeyBinding::plain('?', "?")), Scope::Global, None),
             Quit => action("Quit", Some(KeyBinding::plain('q', "q")), Scope::Global, None),
@@ -288,11 +292,8 @@ impl ActionId {
             GoCost => go(s, View::CostExplorer),
             GoActivity => go(s, View::ActivityLog),
             GoGlobalSearch => go(s, View::GlobalSearch),
-            QuickSwitch => Some(Command::OpenModal(Box::new(Modal::QuickSwitch {
-                query: String::new(),
-                filtered: quick_switch::build_filtered(s, ""),
-                cursor: 0,
-            }))),
+            OpenPalette => Some(Command::OpenPalette(PaletteMode::All)),
+            QuickSwitch => Some(Command::OpenPalette(PaletteMode::ContextsOnly)),
             Help => Some(if s.active_view == View::Help {
                 Command::NavigateTo(s.previous_view.clone())
             } else {
@@ -765,9 +766,10 @@ mod tests {
             RunCommand => 18,
             GoToResourceGroup => 19,
             SwitchToContext => 20,
+            OpenPalette => 21,
         }
     }
-    const VARIANT_COUNT: usize = 21;
+    const VARIANT_COUNT: usize = 22;
 
     #[test]
     fn all_lists_every_variant_exactly_once() {
@@ -992,13 +994,28 @@ mod tests {
     }
 
     #[test]
-    fn resolve_key_ctrl_g_upper_and_lower() {
+    fn resolve_key_ctrl_g_opens_contexts_only_palette() {
         let s = state_with_contexts(Some("sub-a"));
         for c in ['g', 'G'] {
             let cmd = resolve_key(key_mod(KeyCode::Char(c), KeyModifiers::CONTROL), &s);
-            assert!(matches!(cmd, Some(Command::OpenModal(_))), "Ctrl+{c}");
+            assert!(
+                matches!(cmd, Some(Command::OpenPalette(crate::palette::PaletteMode::ContextsOnly))),
+                "Ctrl+{c}"
+            );
         }
     }
+
+    #[test]
+    fn resolve_key_colon_opens_full_palette_even_with_shift() {
+        let s = state_with_contexts(Some("sub-a"));
+        for mods in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+            assert!(matches!(
+                resolve_key(key_mod(KeyCode::Char(':'), mods), &s),
+                Some(Command::OpenPalette(crate::palette::PaletteMode::All))
+            ));
+        }
+    }
+
 
     #[test]
     fn resolve_key_help_with_shift() {

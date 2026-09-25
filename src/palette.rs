@@ -213,6 +213,7 @@ fn push_section(rows: &mut Vec<PaletteRow>, title: &'static str, items: Vec<Pale
 fn action_rows(state: &AppState, target: &Target, query: &str, target_only: bool) -> Vec<PaletteRow> {
     let mut ids: Vec<ActionId> = actions::ordered_visible(state, target)
         .into_iter()
+        .filter(|id| *id != ActionId::OpenPalette)
         .filter(|id| !target_only || matches!(id.spec().scope, Scope::Target(_)))
         .filter(|id| id.applies(state, target))
         .collect();
@@ -446,4 +447,14 @@ mod tests {
         assert_eq!(action_label(ActionId::ActivityForTarget, &vm), "Activity log: web-01");
         assert_eq!(action_label(ActionId::Quit, &vm), "Quit");
     }
+
+    #[test]
+    fn palette_does_not_list_itself() {
+        let s = state_with_contexts(Some("sub-a"));
+        assert!(!rows(&s, PaletteMode::All, "").contains(&PaletteRow::Action(
+            ActionId::OpenPalette,
+            actions::current_target(&s)
+        )));
+    }
+
 }

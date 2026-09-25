@@ -4,7 +4,7 @@ use crate::actions;
 use crate::app::{AppState, CostGrouping, CostView, Modal, PasswordMode, Pane, RunPane, View};
 use crate::command::Command;
 use crate::palette::{PaletteMode, PaletteState};
-use crate::ui::widgets::{activity_log, cost_explorer, quick_switch, resource_browser};
+use crate::ui::widgets::{activity_log, cost_explorer, resource_browser};
 
 /* ============================================================================================== */
 
@@ -268,9 +268,6 @@ fn handle_activity_search_input(key: KeyEvent, state: &AppState) -> Option<Comma
 
 fn handle_modal_input(key: KeyEvent, modal: &Modal, state: &AppState) -> Option<Command> {
     match modal {
-        Modal::QuickSwitch { query, filtered, cursor } => {
-            handle_quick_switch_input(key, query, filtered, *cursor, state)
-        },
         Modal::Palette(p) => handle_palette_input(key, p),
         Modal::Confirm { on_confirm, .. } => match key.code {
             KeyCode::Enter => Some(*on_confirm.clone()),
@@ -313,55 +310,6 @@ fn handle_palette_input(key: KeyEvent, p: &PaletteState) -> Option<Command> {
             q.push(c);
             Some(Command::PaletteQuery(q))
         }
-        _ => None,
-    }
-}
-
-/* ============================================================================================== */
-fn handle_quick_switch_input(
-    key: KeyEvent,
-    query: &str,
-    _filtered: &[crate::domain::models::AzureContext],
-    cursor: usize,
-    state: &AppState,
-) -> Option<Command> {
-    match key.code {
-        KeyCode::Esc => Some(Command::CloseModal),
-
-        KeyCode::Enter => {
-            if let Some(ctx) = quick_switch::selected_context(state) {
-                Some(Command::SwitchContext(ctx))
-            } else { 
-                None
-            }
-        }
-
-        KeyCode::Up | KeyCode::Char('k') => Some(Command::NavUp),
-        KeyCode::Down | KeyCode::Char('j') => Some(Command::NavDown),
-
-        KeyCode::Backspace => {
-            let mut q = query.to_string();
-            q.pop();
-            let new_filtered = quick_switch::build_filtered(state, &q);
-            let new_cursor = cursor.min(new_filtered.len().saturating_sub(1));
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch { 
-                query: q, 
-                filtered: new_filtered, 
-                cursor: new_cursor 
-            })))
-        }
-
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let mut q = query.to_string();
-            q.push(c);
-            let new_filtered = quick_switch::build_filtered(state, query);
-            Some(Command::OpenModal(Box::new(Modal::QuickSwitch { 
-                query: q, 
-                filtered: new_filtered, 
-                cursor: 0 
-            })))
-        }
-
         _ => None,
     }
 }
@@ -461,7 +409,10 @@ mod tests {
         let s = state_with_contexts(Some("sub-a"));
         for c in ['g', 'G'] {
             let cmd = handle_input(key_mod(KeyCode::Char(c), KeyModifiers::CONTROL), &s);
-            assert!(matches!(cmd, Some(Command::OpenModal(_))), "Ctrl+{c}");
+            assert!(
+                matches!(cmd, Some(Command::OpenPalette(PaletteMode::ContextsOnly))),
+                "Ctrl+{c}"
+            );
         }
     }
 

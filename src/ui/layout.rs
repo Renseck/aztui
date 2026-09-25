@@ -7,7 +7,7 @@ use ratatui::Frame;
 use crate::actions::HelpSection;
 use crate::app::{AppState, Modal, View};
 use crate::ui::theme::{Theme};
-use crate::ui::widgets::{context_switcher, modal, quick_switch, status_bar};
+use crate::ui::widgets::{context_switcher, modal, status_bar};
 
 /* ============================================================================================== */
 /// Top-level render function. Draws the complete TUI frame from `state`.
@@ -39,7 +39,6 @@ pub fn render(frame: &mut Frame, state: &AppState, theme: &Theme) {
     // Modal overlays rendered last (on top of everything else).
     if let Some(m) = &state.modal {
         match m {
-            Modal::QuickSwitch { .. } => quick_switch::render(frame, state, theme),
             Modal::Palette(p) => crate::ui::widgets::palette::render(frame, state, p, theme),
             Modal::ErrorDetail(_) => modal::render_error_detail(frame, state, theme),
             Modal::Confirm { .. } => modal::render_confirm(frame, state, theme),
@@ -72,11 +71,11 @@ fn render_title_bar(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppS
         Span::styled(view_label, theme.surface_style().fg(theme.subtle)),
     ]);
 
-    let hint_line = Span::styled("? for help ", theme.hint_style());
+    let hint_line = Span::styled(": palette  ? help ", theme.hint_style());
 
     let layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(1), Constraint::Length(14)])
+        .constraints([Constraint::Min(1), Constraint::Length(20)])
         .split(area);
 
     frame.render_widget(
