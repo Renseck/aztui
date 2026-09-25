@@ -253,6 +253,8 @@ pub struct AppState {
 
     // Global search (Resource Graph)
     pub global_resources: Vec<GlobalResource>,
+    // Precomputed palette match strings, index-aligned with `global_resources`.
+    pub resource_haystacks: Vec<String>,
     pub global_search_query: String,
     pub global_search_cursor: usize,
     pub pending_rg_focus: Option<String>,
@@ -319,6 +321,7 @@ impl AppState {
             resource_browser_focus: Pane::Left,
             resource_search_query: String::new(),
             global_resources: Vec::new(),
+            resource_haystacks: Vec::new(),
             global_search_query: String::new(),
             global_search_cursor: 0,
             pending_rg_focus: None,
@@ -387,7 +390,7 @@ const SLOT_RESOURCES: OperationId = u64::MAX - 4;
 const SLOT_COST: OperationId = u64::MAX - 5;
 const SLOT_RUN_COMMAND: OperationId = u64::MAX - 6;
 const SLOT_ACTIVITY: OperationId = u64::MAX - 7;
-const SLOT_GRAPH: OperationId = u64::MAX - 8;
+pub(crate) const SLOT_GRAPH: OperationId = u64::MAX - 8;
 
 /// Processes a single [`Command`], mutates `state`, may spawn async tasks
 /// (sending results back via `cmd_tx`), and returns emitted [`Event`]s.
@@ -538,6 +541,7 @@ pub async fn dispatch_command(
             match result {
                 Ok(rows) => {
                     state.global_resources = rows;
+                    state.resource_haystacks = crate::palette::resource_haystacks(state);
                     state.global_search_cursor = 0;
                 }
                 Err(e) => {

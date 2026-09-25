@@ -21,6 +21,16 @@ pub fn fuzzy_match(haystack: &str, needle: &str) -> Option<(i64, Vec<usize>)> {
 }
 
 /* ============================================================================================== */
+/// Score-only fuzzy match. Skips collecting match indices, so it is cheaper
+/// than [`fuzzy_match`] when ranking large lists. An empty needle scores 0.
+pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<i64> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    MATCHER.with(|m| m.fuzzy_match(haystack, needle))
+}
+
+/* ============================================================================================== */
 /// Builds per-character spans for `text`, styling matched character positions
 /// with `hit` and the rest with `base`.
 pub fn highlight(text: &str, indices: &[usize], base: Style, hit: Style) -> Vec<Span<'static>> {
@@ -78,4 +88,12 @@ mod tests {
         assert_eq!(spans[0].style, hit);
         assert_eq!(spans[1].style, base);
     }
+
+    #[test]
+    fn score_agrees_with_indexed_match() {
+        assert_eq!(fuzzy_score("prod-westeu", "pw"), fuzzy_match("prod-westeu", "pw").map(|(s, _)| s));
+        assert_eq!(fuzzy_score("abc", "zz"), None);
+        assert_eq!(fuzzy_score("abc", ""), Some(0));
+    }
+
 }
